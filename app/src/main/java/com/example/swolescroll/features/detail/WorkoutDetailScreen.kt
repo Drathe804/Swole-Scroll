@@ -58,7 +58,9 @@ fun WorkoutDetailScreen(
                 val w = set.weight
                 val d = set.distance ?: 0.0
                 val t = set.time ?: 0
-                when (workoutExercise.exercise.type) {
+                val safeType = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
+
+                when (safeType) {
                     ExerciseType.STRENGTH -> (w * set.reps * multiplier).toInt()
                     ExerciseType.ISOMETRIC -> (w * t * multiplier).toInt()
                     ExerciseType.LoadedCarry -> (w * d * multiplier).toInt()
