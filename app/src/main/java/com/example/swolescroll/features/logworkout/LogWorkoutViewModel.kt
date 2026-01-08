@@ -54,39 +54,83 @@ class LogWorkoutViewModel(
     val exerciseList = db.exerciseDao().getAllExercises()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // 1. EXPLICIT TYPE: We tell Kotlin "This definitely holds a Map of Strings"
+    // 1. SMART PR TRACKER (With Incline, Distance & Crash Protection) 🏆
     val personalRecords: kotlinx.coroutines.flow.StateFlow<Map<String, String>> =
         db.workoutDao().getAllWorkouts()
             .map { workouts ->
                 val prMap = mutableMapOf<String, String>()
+                val maxValues = mutableMapOf<String, Double>()
 
                 workouts.forEach { workout ->
                     workout.exercises.forEach { workoutExercise ->
                         val name = workoutExercise.exercise.name
-                        val bestSet = workoutExercise.sets.maxByOrNull { it.weight }
+
+                        // 🛡️ CRASH FIX: Default to STRENGTH if type is null
+                        val type = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
+
+                        // A. Find Best Set
+                        val bestSet = when (type) {
+                            ExerciseType.CARDIO -> workoutExercise.sets.maxByOrNull { it.distance ?: 0.0 }
+                            else -> workoutExercise.sets.maxByOrNull { it.weight }
+                        }
 
                         if (bestSet != null) {
-                            val currentEntry = prMap[name]
-                            val currentWeight =
-                                currentEntry?.substringBefore(" lbs")?.toDoubleOrNull() ?: 0.0
+                            // B. Get Value to Compare
+                            val newValue = when (type) {
+                                ExerciseType.CARDIO -> bestSet.distance ?: 0.0
+                                else -> bestSet.weight
+                            }
 
-                            if (bestSet.weight > currentWeight) {
-                                prMap[name] = "${bestSet.weight} lbs x ${bestSet.reps}"
+                            val currentMax = maxValues[name] ?: 0.0
+
+                            if (newValue > currentMax) {
+                                maxValues[name] = newValue
+
+                                // C. Format String
+                                prMap[name] = when (type) {
+                                    ExerciseType.CARDIO -> {
+                                        val isStairs = name.contains("Stair", true) || name.contains("Step", true)
+                                        val unit = if (isStairs) "stairs" else "mi"
+                                        val timeStr = bestSet.timeFormatted()
+
+                                        // 🏃‍♂️ INTENSITY LOGIC
+                                        val intensityStr = if (name.contains("Treadmill", true)) {
+                                            // Treadmill: Speed (Reps/10) AND Incline (Weight)
+                                            val speed = bestSet.reps / 10.0
+                                            val incline = bestSet.weight
+
+                                            // Build the string dynamically so it looks clean
+                                            val details = mutableListOf<String>()
+                                            if (speed > 0) details.add("Lvl $speed")
+                                            if (incline > 0) details.add("$incline% Inc")
+
+                                            if (details.isNotEmpty()) " (@ ${details.joinToString(", ")})" else ""
+                                        } else {
+                                            // Bike/Stairs: Resistance Level (Weight)
+                                            if (bestSet.weight > 0) " (@ Lvl ${bestSet.weight})" else ""
+                                        }
+
+                                        "$newValue $unit in $timeStr$intensityStr"
+                                    }
+
+                                    // 🏋️‍♂️ CARRIES: Add Distance!
+                                    ExerciseType.LoadedCarry -> "$newValue lbs for ${bestSet.distance ?: 0.0} yds"
+
+                                    ExerciseType.ISOMETRIC -> "$newValue lbs"
+                                    else -> "$newValue lbs x ${bestSet.reps}"
+                                }
                             }
                         }
                     }
                 }
-
-                // 2. RETURN THE MAP: This was missing!
-                // This hands the data to the flow.
                 prMap.toMap()
             }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5000),
-                // 3. INITIAL VALUE: Matches the explicit type
                 initialValue = emptyMap()
             )
+
     init {
         checkForDraft()
     }

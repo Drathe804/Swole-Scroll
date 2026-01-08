@@ -112,9 +112,44 @@ fun EditExerciseItem(
                     if (currentVolume > 0) {
                         Text(text = "Vol: ${java.text.NumberFormat.getIntegerInstance().format(currentVolume)} lbs", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                     }
+
                     if (personalRecord != null) {
-                        Text(text = "PR: $personalRecord", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.SemiBold)
+                        // 🧠 FINAL PR DISPLAY LOGIC
+                        val prText = remember(personalRecord, workoutExercise.exercise.type) {
+
+                            // 1. TRUST THE VIEWMODEL: If it has units we added (mi, stairs, yds), show as is.
+                            if (personalRecord.contains("mi") ||
+                                personalRecord.contains("stairs") ||
+                                personalRecord.contains("yds")) { // 👈 Added "yds" check here!
+                                personalRecord
+                            }
+                            // 2. CARDIO FALLBACK: If it still says "lbs", it's an old "Level" record.
+                            else if (workoutExercise.exercise.type == ExerciseType.CARDIO && personalRecord.contains("lbs")) {
+                                val rawNum = personalRecord.split(" ").firstOrNull() ?: personalRecord
+                                "Max Lvl $rawNum"
+                            }
+                            // 3. CLEANUP FOR OTHERS
+                            else {
+                                // Only strip text for ISOMETRIC now (Carries are handled above)
+                                if (workoutExercise.exercise.type == ExerciseType.ISOMETRIC) {
+                                    val rawNum = personalRecord.split(" ").firstOrNull() ?: personalRecord
+                                    "$rawNum lbs"
+                                } else {
+                                    // Standard Strength
+                                    if (personalRecord.contains("lbs")) personalRecord else "$personalRecord lbs"
+                                }
+                            }
+                        }
+
+                        Text(
+                            text = "PR: $prText",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.secondary,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
+
+
                 }
                 Column {
                     Row {

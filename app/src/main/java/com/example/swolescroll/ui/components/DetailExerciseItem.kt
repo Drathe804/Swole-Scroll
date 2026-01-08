@@ -174,7 +174,7 @@ fun formatDetailSet(set: Set, type: ExerciseType, name: String): String {
     return when(type) {
         ExerciseType.CARDIO -> {
             val dist = set.distance ?: 0.0
-            val distUnit = if(isStairs) "flr" else "mi"
+            val distUnit = if(isStairs) "stairs" else "mi"
             val time = set.timeFormatted()
 
             if (isTreadmill) {
