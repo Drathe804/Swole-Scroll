@@ -145,14 +145,22 @@ fun PRCard(
             Column(
                 horizontalAlignment = Alignment.End
             ) {
+                // 1. MAIN TEXT (Big)
+                // Cardio: "3.10 mi" | Strength: "315.0 lbs"
                 Text(
-                    text = "${record.maxWeight} lbs",
+                    text = record.mainText,
                     style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.secondary,
+                    // Use Primary color for Cardio to give it a unique flair?
+                    color = if (record.type == com.example.swolescroll.model.ExerciseType.CARDIO)
+                        MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.secondary,
                     fontWeight = FontWeight.ExtraBold
                 )
+
+                // 2. SUB TEXT (Small)
+                // Cardio: "6.2 mph (@ Lvl 6)" | Strength: "x 5"
                 Text(
-                    text = "x${record.maxReps}",
+                    text = record.subText,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

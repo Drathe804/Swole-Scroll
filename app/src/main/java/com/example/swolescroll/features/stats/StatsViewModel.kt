@@ -4,15 +4,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.swolescroll.data.WorkoutDao
+import com.example.swolescroll.model.ExerciseType
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-// 1. Update the Data Class to hold Reps
+// 1. DATA CLASS (Holds the pre-formatted text)
 data class PersonalRecord(
     val exerciseName: String,
-    val maxWeight: Double,
-    val maxReps: Int // <--- NEW FIELD
+    val type: ExerciseType,
+    val mainText: String,   // e.g. "315 lbs"
+    val subText: String     // e.g. "x 5" or "for 30 yds"
 )
 
 class StatsViewModel(private val dao: WorkoutDao) : ViewModel() {
@@ -27,34 +29,98 @@ class StatsViewModel(private val dao: WorkoutDao) : ViewModel() {
     private fun calculateStats() {
         viewModelScope.launch {
             dao.getAllWorkouts().collect { workouts ->
-                // We map the Name to a Pair of (Weight, Reps)
-                val maxes = mutableMapOf<String, Pair<Double, Int>>()
+                val records = mutableListOf<PersonalRecord>()
 
-                workouts.forEach { workout ->
-                    workout.exercises.forEach { workoutExercise ->
-                        val exerciseName = workoutExercise.exercise.name
+                // Group by Exercise Name
+                val groupedExercises = workouts
+                    .flatMap { it.exercises }
+                    .groupBy { it.exercise.name }
 
-                        // 2. Find the heaviest SET (not just the weight number)
-                        val bestSet = workoutExercise.sets.maxByOrNull { it.weight }
+                groupedExercises.forEach { (name, history) ->
+                    // Determine Type (Safe fallback)
+                    val type = history.firstOrNull()?.exercise?.type ?: ExerciseType.STRENGTH
 
-                        if (bestSet != null) {
-                            val currentMax = maxes[exerciseName]
+                    // Flatten all sets to find the best single performance
+                    val allSets = history.flatMap { it.sets }
 
-                            // 3. If this set is heavier than what we have on file, replace it!
-                            // (Or if it's the first time we've seen this exercise)
-                            if (currentMax == null || bestSet.weight > currentMax.first) {
-                                maxes[exerciseName] = Pair(bestSet.weight, bestSet.reps)
+                    if (allSets.isNotEmpty()) {
+                        when (type) {
+                            // 🏃‍♂️ CARDIO (Max Distance Session)
+                            ExerciseType.CARDIO -> {
+                                // Find session with max TOTAL distance
+                                val bestSession = history.maxByOrNull { session ->
+                                    session.sets.sumOf { it.distance ?: 0.0 }
+                                }
+
+                                if (bestSession != null) {
+                                    val totalDist = bestSession.sets.sumOf { it.distance ?: 0.0 }
+                                    val totalSeconds = bestSession.sets.sumOf { it.time ?: 0 }
+
+                                    // Avg Speed
+                                    val hours = totalSeconds / 3600.0
+                                    val avgSpeed = if (hours > 0) totalDist / hours else 0.0
+
+                                    // Dominant Level
+                                    val dominantSetGroup = bestSession.sets
+                                        .groupBy { it.weight }
+                                        .maxByOrNull { entry -> entry.value.sumOf { it.time ?: 0 } }
+                                    val domLevel = dominantSetGroup?.key ?: 0.0
+
+                                    val mainStr = String.format("%.2f mi", totalDist)
+                                    val speedStr = String.format("%.2f mph", avgSpeed)
+                                    val subStr = "$speedStr (@ Lvl $domLevel)"
+
+                                    records.add(PersonalRecord(name, type, mainStr, subStr))
+                                }
+                            }
+
+                            // 🚛 LOADED CARRY (Max Weight -> Tie breaker: Max Distance)
+                            ExerciseType.LoadedCarry -> {
+                                val bestSet = allSets.maxWithOrNull(
+                                    compareBy<com.example.swolescroll.model.Set> { it.weight }
+                                        .thenBy { it.distance ?: 0.0 }
+                                )
+
+                                if (bestSet != null) {
+                                    val mainStr = "${bestSet.weight} lbs"
+                                    val subStr = "for ${bestSet.distance ?: 0.0} yds"
+                                    records.add(PersonalRecord(name, type, mainStr, subStr))
+                                }
+                            }
+
+                            // 🧘 ISOMETRIC (Max Weight -> Tie breaker: Max Time)
+                            ExerciseType.ISOMETRIC -> {
+                                val bestSet = allSets.maxWithOrNull(
+                                    compareBy<com.example.swolescroll.model.Set> { it.weight }
+                                        .thenBy { it.time ?: 0 }
+                                )
+
+                                if (bestSet != null) {
+                                    val mainStr = "${bestSet.weight} lbs"
+                                    // Use the helper formatted time (e.g. "1:30")
+                                    val subStr = "for ${bestSet.timeFormatted()}"
+                                    records.add(PersonalRecord(name, type, mainStr, subStr))
+                                }
+                            }
+
+                            // 🏋️‍♂️ STRENGTH (Standard: Max Weight -> Max Reps)
+                            else -> {
+                                val bestSet = allSets.maxWithOrNull(
+                                    compareBy<com.example.swolescroll.model.Set> { it.weight }
+                                        .thenBy { it.reps }
+                                )
+
+                                if (bestSet != null) {
+                                    val mainStr = "${bestSet.weight} lbs"
+                                    val subStr = "x ${bestSet.reps}"
+                                    records.add(PersonalRecord(name, type, mainStr, subStr))
+                                }
                             }
                         }
                     }
                 }
 
-                // 4. Convert to List
-                val records = maxes.map { (name, data) ->
-                    PersonalRecord(name, data.first, data.second)
-                }.sortedBy { it.exerciseName }
-
-                _prList.value = records
+                _prList.value = records.sortedBy { it.exerciseName }
             }
         }
     }

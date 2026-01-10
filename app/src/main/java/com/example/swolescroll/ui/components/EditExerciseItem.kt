@@ -1,5 +1,6 @@
 package com.example.swolescroll.ui.components
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -42,6 +43,7 @@ fun EditExerciseItem(
     onTreadmillSplit: (Int, Double, Int) -> Unit
 ) {
     var selectedTab by remember { mutableStateOf(0) }
+    var showExitWarning by remember { mutableStateOf(false) }
 
     // --- LIVE TIMER STATE ---
     var activeSeconds by remember { mutableStateOf(0) }
@@ -99,8 +101,21 @@ fun EditExerciseItem(
         }
     }
 
+    BackHandler(enabled = isExpanded && isMoving) {
+        showExitWarning = true
+    }
+
     Card(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).clickable { onHeaderClick() },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .clickable {
+                if (isExpanded && isMoving) {
+                    showExitWarning = true
+                } else {
+                    onHeaderClick()
+                }
+            },
         colors = CardDefaults.cardColors(containerColor = if (isExpanded) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant),
         elevation = CardDefaults.cardElevation(defaultElevation = if (isExpanded) 4.dp else 1.dp)
     ) {
@@ -190,7 +205,16 @@ fun EditExerciseItem(
                                 // TIMER LOGIC: Is the machine moving?
                                 // Treadmill: Moves if Reps (Level) > 0
                                 // Bike: Moves if Weight (Level) > 0
-                                val isMoving = if (isTreadmill) secondaryValRaw > 0 else primaryVal > 0.0
+                                // Smart "Is Moving" Check
+                                // 🛡️ ONLY true if it's CARDIO and the numbers are > 0
+                                val isMoving = remember(workoutExercise.exercise.type, primaryVal, secondaryValRaw) {
+                                    if (workoutExercise.exercise.type == ExerciseType.CARDIO) {
+                                        if (isTreadmill) secondaryValRaw > 0 else primaryVal > 0.0
+                                    } else {
+                                        false // Never block the back button for Strength/Isometric/Carries
+                                    }
+                                }
+
 
                                 Text("Live Controls", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
 
@@ -237,7 +261,7 @@ fun EditExerciseItem(
                                             Spacer(Modifier.width(4.dp))
                                             Text("Lvl", modifier = Modifier.weight(0.6f), style = MaterialTheme.typography.labelSmall)
                                         } else {
-                                            Text(if (isStairs) "Floors" else "Dist", modifier = Modifier.weight(0.8f), style = MaterialTheme.typography.labelSmall)
+                                            Text(if (isStairs) "Stairs" else "Dist", modifier = Modifier.weight(0.8f), style = MaterialTheme.typography.labelSmall)
                                             Spacer(Modifier.width(4.dp))
                                             Text("Time", modifier = Modifier.weight(1.2f), style = MaterialTheme.typography.labelSmall)
                                             Spacer(Modifier.width(4.dp))
@@ -287,7 +311,31 @@ fun EditExerciseItem(
                     }
                 }
             }
-            if (!isExpanded && workoutExercise.sets.isNotEmpty()) { Text("${workoutExercise.sets.size} Sets", style = MaterialTheme.typography.bodySmall) }
+            if (!isExpanded && workoutExercise.sets.isNotEmpty()) {
+                Text("${workoutExercise.sets.size} Sets", style = MaterialTheme.typography.bodySmall)
+            }
+            if (showExitWarning) {
+                AlertDialog(
+                    onDismissRequest = { showExitWarning = false },
+                    title = { Text("Workout in progress") },
+                    text = { Text("Your timer is running. Are you sure you want to leave?") },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                showExitWarning = false
+                                onHeaderClick() },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text("Pause & Close")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showExitWarning = false }) {
+                            Text("Keep Running")
+                        }
+                    }
+                )
+            }
         }
     }
 }

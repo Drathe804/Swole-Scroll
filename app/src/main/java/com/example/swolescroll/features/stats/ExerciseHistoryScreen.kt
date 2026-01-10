@@ -32,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -47,8 +48,6 @@ fun ExerciseHistoryScreen(
     onBackClick: () -> Unit
 ) {
     val history by viewModel.history.collectAsState()
-
-    // STATE: Track which tab is open (0 = History, 1 = Notes)
     var selectedTab by remember { mutableStateOf(0) }
 
     Scaffold(
@@ -69,40 +68,26 @@ fun ExerciseHistoryScreen(
     ) { innerPadding ->
         Column(modifier = Modifier.padding(innerPadding)) {
 
-            // 1. THE TAB ROW (The part you were missing!)
             TabRow(selectedTabIndex = selectedTab) {
-                Tab(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    text = { Text("History") }
-                )
-                Tab(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    text = { Text("Notes") }
-                )
+                Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("History") })
+                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Notes") })
             }
 
-            // 2. THE CONTENT LIST
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (selectedTab == 0) {
-                    // --- HISTORY TAB ---
                     if (history.isEmpty()) {
                         item { Text("No history found.") }
                     } else {
                         items(history) { entry ->
-                            HistoryCard(entry)
+                            HistoryCard(entry, exerciseName)
                         }
                     }
                 } else {
-                    // --- NOTES TAB ---
-                    // Only show entries that actually have notes
                     val notesOnly = history.filter { it.note.isNotBlank() }
-
                     if (notesOnly.isEmpty()) {
                         item {
                             Text(
@@ -113,9 +98,7 @@ fun ExerciseHistoryScreen(
                             )
                         }
                     } else {
-                        items(notesOnly) { entry ->
-                            NoteCard(entry)
-                        }
+                        items(notesOnly) { entry -> NoteCard(entry) }
                     }
                 }
             }
@@ -123,83 +106,173 @@ fun ExerciseHistoryScreen(
     }
 }
 
-// 3. CARD FOR HISTORY (Weights)
 @Composable
-fun HistoryCard(entry: HistoryEntry) {
+fun HistoryCard(
+    entry: HistoryEntry,
+    exerciseName: String
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             val dateString = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(entry.date))
-            Text(
-                text = dateString,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = dateString,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            // 🧠 INTELLIGENT EXERCISE TYPE DETECTION
+            val isCarry = exerciseName.contains("Carry", true) ||
+                    exerciseName.contains("Farmer", true) ||
+                    exerciseName.contains("Yoke", true)
+
+            // It's "Cardio" only if it has distance/time AND IS NOT A CARRY
+            val hasDistance = entry.sets.any { (it.distance ?: 0.0) > 0.0 }
+            val isCardioLikely = !isCarry && hasDistance && entry.sets.any { it.time > 0 }
+
+            // --- HEADER SUMMARY ---
+            if (isCarry) {
+                // 🚛 CARRY SUMMARY (Max Weight & Total Distance)
+                val bestSet = entry.sets.maxByOrNull { it.weight }
+                val maxWeight = bestSet?.weight ?: 0.0
+                val totalDist = entry.sets.sumOf { it.distance ?: 0.0 }
+
+                Text(
+                    text = "Best: $maxWeight lbs | Vol: $totalDist yds",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+            } else if (isCardioLikely) {
+                // 🏃‍♂️ CARDIO SUMMARY (Total Distance & Time)
+                val totalDist = entry.sets.sumOf { it.distance ?: 0.0 }
+                val totalSeconds = entry.sets.sumOf { it.time ?: 0 }
+
+                val m = totalSeconds / 60
+                val s = totalSeconds % 60
+                val timeStr = String.format("%d:%02d", m, s)
+                val distStr = String.format("%.2f", totalDist).trimEnd('0').trimEnd('.')
+
+                val dominantSetGroup = entry.sets
+                    .groupBy { Pair(it.reps, it.weight) }
+                    .entries
+                    .maxWithOrNull(
+                        compareBy<Map.Entry<Pair<Int, Double>, List<com.example.swolescroll.model.Set>>> {
+                            it.value.sumOf { s -> s.time }
+                        }.thenBy {
+                            it.value.sumOf { s -> s.distance ?: 0.0 }
+                        }
+                    )
+
+                val domReps = dominantSetGroup?.key?.first ?: 0
+                val domWeight = dominantSetGroup?.key?.second ?: 0.0
+
+                val details = mutableListOf<String>()
+                val isTreadmill = exerciseName.contains("Treadmill", true)
+
+                if (isTreadmill) {
+                    if (domWeight > 0) details.add("Lvl $domWeight")
+                    if (domReps > 0) details.add("${domReps/10.0}% Inc")
+                } else {
+                    if (domWeight > 0) details.add("Lvl $domWeight")
+                }
+
+                val detailStr = if (details.isNotEmpty()) " (@ ${details.joinToString(", ")})" else ""
+                val unit = if (exerciseName.contains("Stair", true)) "stairs" else "mi"
+
+                Text(
+                    text = "Total: $distStr $unit in $timeStr$detailStr",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-            entry.sets.forEachIndexed { index, set ->
+            // --- SET LIST ---
+            val visibleSets = if (isCardioLikely) {
+                entry.sets.filter { (it.distance ?: 0.0) > 0.0 }
+            } else {
+                entry.sets
+            }
+
+            visibleSets.forEachIndexed { index, set ->
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        text = "Set ${index + 1}",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    val setCheck = set
-                    val isCardio = (setCheck.distance ?: 0.0) > 0 && setCheck.reps == 0 && setCheck.weight == 0.0
-                    val isCarry = (setCheck.distance ?: 0.0) > 0 && setCheck.weight > 0
-                    val isIso = setCheck.time > 0 && setCheck.weight > 0 && (setCheck.distance ?: 0.0) == 0.0
+                    Text(text = "Set ${index + 1}", style = MaterialTheme.typography.bodyMedium)
 
                     val formattedText = when {
-                        isCardio -> "${setCheck.distance ?: 0.0} mi in ${setCheck.timeFormatted()}"
-                        isCarry -> "${setCheck.weight} lbs for ${setCheck.distance ?: 0.0} yds"
-                        isIso -> "${setCheck.weight} lbs for ${setCheck.timeFormatted()}"
-                        else -> "${setCheck.weight} lbs x ${setCheck.reps} reps"
+                        // 1. CARRY (Explicit Check First!)
+                        isCarry -> {
+                            val dist = set.distance ?: 0.0
+                            "${set.weight} lbs for $dist yds"
+                        }
+
+                        // 2. CARDIO
+                        isCardioLikely && (set.distance ?: 0.0) > 0 -> {
+                            val d = set.distance ?: 0.0
+                            val t = set.timeFormatted()
+
+                            val isTreadmillRow = exerciseName.contains("Treadmill", true)
+                            val speed = set.reps / 10.0
+                            val rowWeight = set.weight
+
+                            val extras = mutableListOf<String>()
+                            if (isTreadmillRow) {
+                                if (rowWeight > 0) extras.add("Lvl $rowWeight")
+                                if (speed > 0) extras.add("$speed% Inc")
+                            } else {
+                                if (rowWeight > 0) extras.add("Lvl $rowWeight")
+                            }
+
+                            val extraStr = if (extras.isNotEmpty()) " (${extras.joinToString(", ")})" else ""
+                            val rowUnit = if (exerciseName.contains("Stair", true)) "stairs" else "mi"
+                            "$d $rowUnit in $t$extraStr"
+                        }
+
+                        // 3. ISOMETRIC (Time based, no reps)
+                        set.time > 0 && set.reps == 0 -> {
+                            val w = if(set.weight > 0) "${set.weight} lbs for " else ""
+                            "$w${set.timeFormatted()}"
+                        }
+
+                        // 4. STRENGTH (Standard)
+                        else -> "${set.weight} lbs x ${set.reps} reps"
                     }
-                    Text(
-                        text = formattedText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
+
+                    Text(text = formattedText, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
     }
 }
 
-// 4. CARD FOR NOTES (Advice)
 @Composable
 fun NoteCard(entry: HistoryEntry) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            // Different color so it feels distinct
-            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
-        )
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             val dateString = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(entry.date))
-
-            Text(
-                text = dateString,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold
-            )
-
+            Text(text = dateString, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(4.dp))
-
-            Text(
-                text = entry.note,
-                style = MaterialTheme.typography.bodyLarge
-            )
+            Text(text = entry.note, style = MaterialTheme.typography.bodyLarge)
         }
     }
 }
