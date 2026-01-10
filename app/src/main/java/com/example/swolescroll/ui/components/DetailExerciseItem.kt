@@ -39,11 +39,82 @@ fun DetailExerciseItem(
     // STATE: Is the dropdown open?
     var expanded by remember { mutableStateOf(false) }
 
-    // 🛡️ CRASH FIX: Define a safe type once to use everywhere
-    // If type is missing (null), assume STRENGTH
+    // Safe Type Fallback
     val safeType = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
 
-    // 1. SMART VOLUME CALCULATION
+    // 1. FILTER: Create a clean list for display 🧹
+    // If Cardio, only show sets with actual movement.
+    val visibleSets = remember(workoutExercise.sets) {
+        if (safeType == ExerciseType.CARDIO) {
+            workoutExercise.sets.filter { (it.distance ?: 0.0) > 0.0 }
+        } else {
+            workoutExercise.sets
+        }
+    }
+
+    // 2. SMART SUMMARY HEADER 🧠
+    val summaryText = remember(workoutExercise.sets) {
+        if (safeType == ExerciseType.CARDIO) {
+            // A. Totals
+            val totalDist = workoutExercise.sets.sumOf { it.distance ?: 0.0 }
+            val totalSeconds = workoutExercise.sets.sumOf { it.time ?: 0 }
+
+            // Format Distance
+            val distStr = String.format("%.2f", totalDist).trimEnd('0').trimEnd('.')
+
+            // B. Majority Logic
+            // Group by settings -> Find which one had the most TIME.
+            val dominantSetGroup = workoutExercise.sets
+                .groupBy { Pair(it.reps, it.weight) } // Pair(Reps, Weight)
+                .entries
+                .maxWithOrNull(
+                    compareBy<Map.Entry<Pair<Int, Double>, List<Set>>> { entry ->
+                        entry.value.sumOf { it.time ?: 0 }
+                    }.thenBy { entry ->
+                        entry.value.sumOf { it.distance ?: 0.0 }
+                    }
+                )
+
+            // 💡 VARIABLE MAPPING:
+            // first = Reps (Used for Incline now)
+            // second = Weight (Used for LEVEL now)
+            val domReps = dominantSetGroup?.key?.first ?: 0
+            val domWeight = dominantSetGroup?.key?.second ?: 0.0
+
+            // C. Format Time
+            val m = totalSeconds / 60
+            val s = totalSeconds % 60
+            val timeStr = String.format("%d:%02d", m, s)
+
+            // D. Format Intensity (THE FIX 🛠️)
+            val intensityParts = mutableListOf<String>()
+            val isTreadmill = workoutExercise.exercise.name.contains("Treadmill", true)
+
+            // 1. Level (Always from Weight)
+            if (domWeight > 0) intensityParts.add("Lvl $domWeight")
+
+            // 2. Incline (Only for Treadmill, from Reps)
+            if (isTreadmill && domReps > 0) {
+                intensityParts.add("${domReps/10.0}% Inc")
+            }
+
+            val intStr = if(intensityParts.isNotEmpty()) " (@ ${intensityParts.joinToString(", ")})" else ""
+
+            val isStairs = workoutExercise.exercise.name.contains("Stair", true)
+            val unit = if (isStairs) "stairs" else "mi"
+
+            "Total: $distStr $unit in $timeStr$intStr"
+        }
+        else {
+            // Standard "Top Set" for Strength
+            val bestSet = workoutExercise.sets.maxByOrNull { it.weight }
+            if (bestSet != null) {
+                formatDetailSet(bestSet, safeType, workoutExercise.exercise.name)
+            } else null
+        }
+    }
+
+    // 3. VOLUME CALCULATION (Same as before)
     val totalVolume = remember(workoutExercise.sets, workoutExercise.exercise.isSingleSide) {
         workoutExercise.sets.sumOf { set ->
             val multiplier = if (workoutExercise.exercise.isSingleSide) 2 else 1
@@ -57,15 +128,6 @@ fun DetailExerciseItem(
                 ExerciseType.LoadedCarry -> (w * d * multiplier).toInt()
                 else -> 0
             }
-        }
-    }
-
-    // 2. SMART "BEST SET" FINDER
-    // (This was crashing before because we checked the unsafe type directly!)
-    val bestSet = remember(workoutExercise.sets) {
-        when(safeType) {
-            ExerciseType.CARDIO, ExerciseType.LoadedCarry -> workoutExercise.sets.maxByOrNull { it.distance ?: 0.0 }
-            else -> workoutExercise.sets.maxByOrNull { it.weight }
         }
     }
 
@@ -93,11 +155,9 @@ fun DetailExerciseItem(
                         fontWeight = FontWeight.Bold
                     )
                     // The Summary Line
-                    if (bestSet != null) {
-                        // Pass 'safeType' here instead of the nullable 'exercise.type'
-                        val summaryText = formatDetailSet(bestSet, safeType, workoutExercise.exercise.name)
+                    if (summaryText != null) {
                         Text(
-                            text = "Top Set: $summaryText",
+                            text = summaryText,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -114,7 +174,7 @@ fun DetailExerciseItem(
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "${workoutExercise.sets.size} Sets",
+                        text = "${visibleSets.size} Sets",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -131,7 +191,8 @@ fun DetailExerciseItem(
                 Column {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-                    workoutExercise.sets.forEachIndexed { index, set ->
+                    // Iterate over ONLY the visible sets
+                    visibleSets.forEachIndexed { index, set ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -143,7 +204,6 @@ fun DetailExerciseItem(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            // Pass 'safeType' here too
                             Text(
                                 text = formatDetailSet(set, safeType, workoutExercise.exercise.name),
                                 style = MaterialTheme.typography.bodyMedium,
@@ -167,6 +227,7 @@ fun DetailExerciseItem(
 }
 
 // 🛠️ HELPER: Formats the set string based on Type
+// UPDATED: Now respects that Weight = Lvl and Reps = Incline
 fun formatDetailSet(set: Set, type: ExerciseType, name: String): String {
     val isTreadmill = name.contains("Treadmill", true) || name.contains("Run", true)
     val isStairs = name.contains("Stair", true) || name.contains("Step", true)
@@ -177,11 +238,20 @@ fun formatDetailSet(set: Set, type: ExerciseType, name: String): String {
             val distUnit = if(isStairs) "stairs" else "mi"
             val time = set.timeFormatted()
 
+            // 1. Main Level (Always Weight)
+            val level = set.weight
+            val details = mutableListOf<String>()
+
+            if (level > 0) details.add("Lvl $level")
+
+            // 2. Treadmill Incline (Always Reps)
             if (isTreadmill) {
-                "$dist $distUnit in $time (${set.weight}% inc)"
-            } else {
-                "$dist $distUnit in $time (Lvl ${set.weight})"
+                val inc = set.reps / 10.0
+                if (inc > 0) details.add("$inc% Inc")
             }
+
+            val detailStr = if (details.isNotEmpty()) " (${details.joinToString(", ")})" else ""
+            "$dist $distUnit in $time$detailStr"
         }
         ExerciseType.ISOMETRIC -> "${set.weight} lbs for ${set.timeFormatted()}"
         ExerciseType.LoadedCarry -> "${set.weight} lbs for ${set.distance ?: 0.0} yds"

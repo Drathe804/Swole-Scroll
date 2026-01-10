@@ -53,8 +53,9 @@ class LogWorkoutViewModel(
 
     val exerciseList = db.exerciseDao().getAllExercises()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    // Inside LogWorkoutViewModel.kt
 
-    // 1. SMART PR TRACKER (With Incline, Distance & Crash Protection) 🏆
+    // 1. SMART PR TRACKER (Totals + Dominant Level) 🏆
     val personalRecords: kotlinx.coroutines.flow.StateFlow<Map<String, String>> =
         db.workoutDao().getAllWorkouts()
             .map { workouts ->
@@ -64,62 +65,71 @@ class LogWorkoutViewModel(
                 workouts.forEach { workout ->
                     workout.exercises.forEach { workoutExercise ->
                         val name = workoutExercise.exercise.name
-
-                        // 🛡️ CRASH FIX: Default to STRENGTH if type is null
                         val type = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
 
-                        // A. Find Best Set
-                        val bestSet = when (type) {
-                            ExerciseType.CARDIO -> workoutExercise.sets.maxByOrNull { it.distance ?: 0.0 }
-                            else -> workoutExercise.sets.maxByOrNull { it.weight }
+                        // A. CALCULATE THE VALUE TO COMPARE
+                        val (candidateValue, displayString) = when (type) {
+                            ExerciseType.CARDIO -> {
+                                // 1. TOTALS: Sum up the entire session
+                                val totalDist = workoutExercise.sets.sumOf { it.distance ?: 0.0 }
+                                val totalSeconds = workoutExercise.sets.sumOf { it.time ?: 0 }
+
+                                // 2. MAJORITY LEVEL: Find the level used for the most TIME ⏳
+                                // Group sets by Level (reps) -> Sum their duration -> Pick the winner
+                                val dominantLevelEntry = workoutExercise.sets
+                                    .groupBy { it.reps } // Group by Level
+                                    .maxByOrNull { entry -> entry.value.sumOf { it.time ?: 0 } } // Find max duration
+
+                                val majorityLevelRaw = dominantLevelEntry?.key ?: 0
+
+                                // 3. FORMATTING
+                                val isStairs = name.contains("Stair", true) || name.contains("Step", true)
+                                val unit = if (isStairs) "stairs" else "mi"
+
+                                // Helper to format time (e.g. 3600s -> "60:00")
+                                val h = totalSeconds / 3600
+                                val m = (totalSeconds % 3600) / 60
+                                val s = totalSeconds % 60
+                                val timeFormatted = if (h > 0) String.format("%d:%02d:%02d", h, m, s) else String.format("%02d:%02d", m, s)
+
+                                // Intensity String (based on the MAJORITY level)
+                                val intensityStr = if (name.contains("Treadmill", true)) {
+                                    val speed = majorityLevelRaw / 10.0
+                                    // Note: We aren't calculating majority incline here to keep it simple, but you could!
+                                    if (speed > 0) " (@ Lvl $speed)" else ""
+                                } else {
+                                    // Bike/Stairs (Level is in 'weight')
+                                    // We need to do the same "Majority" logic for weight if it's a Bike
+                                    // For simplicity, let's grab the weight from the dominant set group
+                                    val dominantWeight = dominantLevelEntry?.value?.firstOrNull()?.weight ?: 0.0
+                                    if (dominantWeight > 0) " (@ Lvl $dominantWeight)" else ""
+                                }
+
+                                // RETURN: Pair(The Distance Number, The Nice String)
+                                Pair(totalDist, "$totalDist $unit in $timeFormatted$intensityStr")
+                            }
+
+                            // NON-CARDIO: Standard Max Logic
+                            else -> {
+                                val bestSet = workoutExercise.sets.maxByOrNull { it.weight }
+                                val bestVal = bestSet?.weight ?: 0.0
+                                val str = if (type == ExerciseType.LoadedCarry) {
+                                    "$bestVal lbs for ${bestSet?.distance ?: 0.0} yds"
+                                } else if (type == ExerciseType.ISOMETRIC) {
+                                    "$bestVal lbs"
+                                } else {
+                                    "$bestVal lbs x ${bestSet?.reps}"
+                                }
+                                Pair(bestVal, str)
+                            }
                         }
 
-                        if (bestSet != null) {
-                            // B. Get Value to Compare
-                            val newValue = when (type) {
-                                ExerciseType.CARDIO -> bestSet.distance ?: 0.0
-                                else -> bestSet.weight
-                            }
-
-                            val currentMax = maxValues[name] ?: 0.0
-
-                            if (newValue > currentMax) {
-                                maxValues[name] = newValue
-
-                                // C. Format String
-                                prMap[name] = when (type) {
-                                    ExerciseType.CARDIO -> {
-                                        val isStairs = name.contains("Stair", true) || name.contains("Step", true)
-                                        val unit = if (isStairs) "stairs" else "mi"
-                                        val timeStr = bestSet.timeFormatted()
-
-                                        // 🏃‍♂️ INTENSITY LOGIC
-                                        val intensityStr = if (name.contains("Treadmill", true)) {
-                                            // Treadmill: Speed (Reps/10) AND Incline (Weight)
-                                            val speed = bestSet.reps / 10.0
-                                            val incline = bestSet.weight
-
-                                            // Build the string dynamically so it looks clean
-                                            val details = mutableListOf<String>()
-                                            if (speed > 0) details.add("Lvl $speed")
-                                            if (incline > 0) details.add("$incline% Inc")
-
-                                            if (details.isNotEmpty()) " (@ ${details.joinToString(", ")})" else ""
-                                        } else {
-                                            // Bike/Stairs: Resistance Level (Weight)
-                                            if (bestSet.weight > 0) " (@ Lvl ${bestSet.weight})" else ""
-                                        }
-
-                                        "$newValue $unit in $timeStr$intensityStr"
-                                    }
-
-                                    // 🏋️‍♂️ CARRIES: Add Distance!
-                                    ExerciseType.LoadedCarry -> "$newValue lbs for ${bestSet.distance ?: 0.0} yds"
-
-                                    ExerciseType.ISOMETRIC -> "$newValue lbs"
-                                    else -> "$newValue lbs x ${bestSet.reps}"
-                                }
-                            }
+                        // B. COMPARE & SAVE
+                        // Only update if this session was "better" (More Distance or More Weight)
+                        val currentMax = maxValues[name] ?: 0.0
+                        if (candidateValue > currentMax) {
+                            maxValues[name] = candidateValue
+                            prMap[name] = displayString
                         }
                     }
                 }
@@ -130,6 +140,7 @@ class LogWorkoutViewModel(
                 started = SharingStarted.WhileSubscribed(5000),
                 initialValue = emptyMap()
             )
+
 
     init {
         checkForDraft()

@@ -93,16 +93,34 @@ fun LogWorkoutScreen(
     // Editable Title State
     var isEditingTitle by remember { mutableStateOf(false) }
     var exerciseToDelete by remember { mutableStateOf<WorkoutExercise?>(null) }
-    val currentSessionVolume by remember {
-        derivedStateOf {
-            viewModel.addedExercises.sumOf { exercise ->
-                exercise.sets.sumOf { set ->
-                    val multiplier = if (exercise.exercise.isSingleSide) 2 else 1
-                    (set.weight * set.reps * multiplier).toInt()
+
+    // 🧠 SMART SESSION VOLUME
+    // Calculates Strength/Iso/Carries correctly, but IGNORES Cardio.
+    val currentSessionVolume = remember(viewModel.addedExercises.toList()) {
+        viewModel.addedExercises.sumOf { workoutExercise ->
+            workoutExercise.sets.sumOf { set ->
+                val multiplier = if (workoutExercise.exercise.isSingleSide) 2 else 1
+                val w = set.weight
+                val d = set.distance ?: 0.0
+                val t = set.time ?: 0
+
+                // 🛡️ CRASH FIX: Safe Type
+                val safeType = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
+
+                when (safeType) {
+                    ExerciseType.STRENGTH -> (w * set.reps * multiplier).toInt()
+                    ExerciseType.ISOMETRIC -> (w * t * multiplier).toInt()
+                    ExerciseType.LoadedCarry -> (w * d * multiplier).toInt()
+
+                    // 🛑 CARDIO -> 0 Volume (Don't add "Incline * Speed" to the total)
+                    ExerciseType.CARDIO -> 0
+
+                    else -> 0
                 }
             }
         }
     }
+
 
 
     // 3. EFFECTS (TRIGGERS)
