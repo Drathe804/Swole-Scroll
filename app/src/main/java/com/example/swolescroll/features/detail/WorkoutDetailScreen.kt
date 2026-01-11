@@ -13,6 +13,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -45,12 +47,14 @@ import java.util.Locale
 @Composable
 fun WorkoutDetailScreen(
     viewModel: WorkoutDetailViewModel,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onEditClick: (String) -> Unit // New Edit Callback
 ) {
     val workout = viewModel.workout.value
     var isEditingTitle by remember { mutableStateOf(false) }
-
     var showDeleteDialog by remember { mutableStateOf(false) }
+
+    // 1. RESTORED VOLUME CALCULATION
     val totalWorkoutVolume = remember(workout?.exercises) {
         workout?.exercises?.sumOf { workoutExercise ->
             workoutExercise.sets.sumOf { set ->
@@ -79,19 +83,15 @@ fun WorkoutDetailScreen(
                 TextButton(onClick = {
                     viewModel.deleteWorkout(onDeleted = onBackClick)
                     showDeleteDialog = false
-                }
-                ) {
+                }) {
                     Text("Delete", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("Cancel")
-                }
+                TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel") }
             }
         )
     }
-
 
     Scaffold(
         topBar = {
@@ -101,9 +101,7 @@ fun WorkoutDetailScreen(
                         var tempName by remember { mutableStateOf(workout?.name ?: "") }
                         androidx.compose.material3.OutlinedTextField(
                             value = tempName,
-                            onValueChange = { newName ->
-                                tempName = newName
-                            },
+                            onValueChange = { newName -> tempName = newName },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             textStyle = MaterialTheme.typography.titleLarge,
@@ -143,6 +141,17 @@ fun WorkoutDetailScreen(
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 },
+                // 2. NEW EDIT/DELETE BUTTONS
+                actions = {
+                    if (workout != null) {
+                        IconButton(onClick = { onEditClick(workout.id) }) {
+                            Icon(Icons.Default.Edit, contentDescription = "Edit Workout")
+                        }
+                        IconButton(onClick = { showDeleteDialog = true }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete Workout", tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -151,7 +160,6 @@ fun WorkoutDetailScreen(
         }
     ) { innerPadding ->
         if (workout == null) {
-            // Loading State
             Column(
                 modifier = Modifier
                     .padding(innerPadding)
@@ -160,13 +168,12 @@ fun WorkoutDetailScreen(
                 Text("Loading scroll...")
             }
         } else {
-            // Content State
             Column(
                 modifier = Modifier
                     .padding(innerPadding)
                     .fillMaxSize()
             ) {
-                // Header Info
+                // 3. RESTORED HEADER INFO
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         text = workout.name,
@@ -175,20 +182,14 @@ fun WorkoutDetailScreen(
                     )
                     if (totalWorkoutVolume > 0) {
                         Text(
-                            text = "Total Volume: ${
-                                java.text.NumberFormat.getIntegerInstance()
-                                    .format(totalWorkoutVolume)
-                            } lbs",
+                            text = "Total Volume: ${java.text.NumberFormat.getIntegerInstance().format(totalWorkoutVolume)} lbs",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold
                         )
                     }
 
-                    val dateString = SimpleDateFormat(
-                        "EEEE, MMM dd",
-                        Locale.getDefault()
-                    ).format(Date(workout.date))
+                    val dateString = SimpleDateFormat("EEEE, MMM dd", Locale.getDefault()).format(Date(workout.date))
                     Text(
                         text = dateString,
                         style = MaterialTheme.typography.bodyLarge,
@@ -196,15 +197,14 @@ fun WorkoutDetailScreen(
                     )
                 }
 
-                // Workout Notes Display
-                if (workout.notes.isNotBlank()) {
-                    Spacer(modifier = Modifier.padding(12.dp))
+                // 4. RESTORED NOTES DISPLAY
+                if (!workout.notes.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.padding(6.dp)) // Slight padding tweak
                     Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
+                        Column(modifier = Modifier.padding(12.dp).fillMaxWidth()) {
                             Text(
                                 text = "Workout Notes",
                                 style = MaterialTheme.typography.titleMedium,
@@ -220,7 +220,7 @@ fun WorkoutDetailScreen(
                     }
                 }
 
-                // The List of Exercises
+                // 5. RESTORED LIST
                 LazyColumn(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -228,7 +228,6 @@ fun WorkoutDetailScreen(
                     items(workout.exercises) { workoutExercise ->
                         DetailExerciseItem(workoutExercise = workoutExercise)
                     }
-
                 }
             }
         }

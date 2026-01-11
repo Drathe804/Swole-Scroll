@@ -50,6 +50,7 @@ class LogWorkoutViewModel(
     var historyTitle by mutableStateOf("")
     private val _exerciseHistory = MutableStateFlow<List<WorkoutExercise>>(emptyList())
     val exerciseHistory = _exerciseHistory.asStateFlow()
+    var currentWorkoutId: String? = null
 
     val exerciseList = db.exerciseDao().getAllExercises()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -167,6 +168,7 @@ class LogWorkoutViewModel(
                 started = SharingStarted.WhileSubscribed(5000),
                 initialValue = emptyMap()
             )
+
     fun loadHistory(targetExerciseId: String, name: String) {
         historyTitle = name
         viewModelScope.launch {
@@ -256,8 +258,46 @@ class LogWorkoutViewModel(
         }
     }
 
+    // ---------------------------------------------------------
+    // ✅ FIXED: EDITING & SAVING LOGIC (Uses 'db' correctly)
+    // ---------------------------------------------------------
+
+    // 2. LOAD FUNCTION
+    fun initializeForEdit(workoutId: String) {
+        viewModelScope.launch {
+            // FIX: Use 'db.workoutDao()' instead of 'dao'
+            val workout = db.workoutDao().getWorkoutById(workoutId) ?: return@launch
+
+            // A. Setup ID & Header Info
+            currentWorkoutId = workout.id
+            workoutName.value = workout.name
+            workoutDate.value = workout.date
+            // FIX: Use 'notes' (plural) if that is what your Data Class uses
+            workoutNote.value = workout.notes ?: ""
+
+            // B. Load Exercises
+            addedExercises.clear()
+            addedExercises.addAll(workout.exercises)
+        }
+    }
+
+    // 3. DELETE FUNCTION
+    fun deleteCurrentWorkout(onDeleted: () -> Unit) {
+        viewModelScope.launch {
+            currentWorkoutId?.let { id ->
+                val workout = db.workoutDao().getWorkoutById(id)
+                if (workout != null) {
+                    db.workoutDao().deleteWorkout(workout)
+                    onDeleted()
+                }
+            }
+        }
+    }
+
     fun saveWorkout(onSaved: () -> Unit) {
         if (addedExercises.isEmpty()) return
+
+        // Simple Validation
         val validExercises = addedExercises.filter { it.sets.isNotEmpty() }
         if (validExercises.isEmpty()) {
             android.widget.Toast.makeText(
@@ -267,43 +307,54 @@ class LogWorkoutViewModel(
         }
 
         viewModelScope.launch {
+            // 1. Determine ID (Reuse if editing, New if creating)
+            val finalId = currentWorkoutId ?: java.util.UUID.randomUUID().toString()
 
+            // 2. Create Name
             val finalName = when {
                 workoutName.value.isNotBlank() -> workoutName.value
-
                 addedExercises.isNotEmpty() -> "${addedExercises.first().exercise.muscleGroup} Day"
                 else -> "Untitled Workout"
             }
-            // 1. Save to DB
+
+            // 3. Build Object
             val workout = Workout(
+                id = finalId,
                 name = finalName,
                 date = workoutDate.value,
                 exercises = validExercises,
                 notes = workoutNote.value
             )
+
+            // 4. Save to DB
             db.workoutDao().insertWorkout(workout)
 
-            addedExercises.forEach { workoutExercise ->
-                db.exerciseDao().insertExercise(workoutExercise.exercise)
+            // 5. Update Exercises Table (🛡️ WITH CRASH FIX)
+            validExercises.forEach { workoutExercise ->
+                // CHECK: Is the Type null? If so, force it to STRENGTH.
+                val safeExercise = if (workoutExercise.exercise.type == null) {
+                    workoutExercise.exercise.copy(type = ExerciseType.STRENGTH)
+                } else {
+                    workoutExercise.exercise
+                }
+                // Save the safe version
+                db.exerciseDao().insertExercise(safeExercise)
             }
 
-            // 2. AUTOMATIC BACKUP TRIGGER
-            // Grab the latest data from DB
+            // 6. Backup & Cleanup
             val allWorkouts = db.workoutDao().getAllWorkouts().first()
             val allExercises = db.exerciseDao().getAllExercises().first()
-
-            // Write to file
             BackupManager.saveDataToStorage(application, allWorkouts, allExercises)
-            android.widget.Toast.makeText(
-                application,
-                "Workout Saved & Backed Up!",
-                android.widget.Toast.LENGTH_SHORT
-            ).show()
+
+            android.widget.Toast.makeText(application, "Saved!", android.widget.Toast.LENGTH_SHORT).show()
+
             db.draftDao().clearDraft()
 
             onSaved()
         }
     }
+
+
     fun splitCardioSet(
         exerciseId: String,
         currentSetIndex: Int,
