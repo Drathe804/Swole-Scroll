@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
@@ -85,23 +86,42 @@ fun SwoleScrollApp(app: SwoleScrollApplication) {
 
                 WorkoutDetailScreen(
                     viewModel = viewModel,
-                    onBackClick = { navController.popBackStack() }
+                    onBackClick = { navController.popBackStack() },
+                    onEditClick = { workoutId ->
+                        navController.navigate("log_workout?workoutId=$workoutId")
+                    }
                 )
             }
 
-            // ROUTE 2: LOG WORKOUT (Now using Real Database!)
-            composable(Screen.LogWorkout.route) {
+            // ROUTE 2: LOG WORKOUT (Updated for Editing!)
+            composable(
+                // 1. Update route to accept optional ID
+                route = "log_workout?workoutId={workoutId}",
+                arguments = listOf(navArgument("workoutId") { nullable = true })
+            ) { backStackEntry ->
+
+                // 2. Initialize ViewModel (Using your existing Factory)
                 val viewModel: LogWorkoutViewModel = viewModel(
                     factory = LogWorkoutViewModelFactory(
                         application = app,
                         db = app.database,
                     )
                 )
-                // 1. Get the DAO from the App
-                val workoutDao = app.database.workoutDao()
-                val exerciseDao = app.database.exerciseDao()
 
-                // 3. Show the Screen
+                // 3. Get the ID (if it exists)
+                val workoutIdToEdit = backStackEntry.arguments?.getString("workoutId")
+
+                // 4. If ID exists, tell ViewModel to load that workout!
+                LaunchedEffect(workoutIdToEdit) {
+                    if (workoutIdToEdit != null) {
+                        viewModel.initializeForEdit(workoutIdToEdit)
+                    } else {
+                        // Optional: Ensure we are clean if opening "New"
+                        // viewModel.resetToNew()
+                    }
+                }
+
+                // 5. Show the Screen
                 LogWorkoutScreen(
                     viewModel = viewModel,
                     onBackClick = { navController.popBackStack() },
@@ -111,6 +131,7 @@ fun SwoleScrollApp(app: SwoleScrollApplication) {
                     }
                 )
             }
+
 
             // Stats Screen
             composable(Screen.Stats.route) {

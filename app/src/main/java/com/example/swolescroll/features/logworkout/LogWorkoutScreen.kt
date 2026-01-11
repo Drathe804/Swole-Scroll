@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardActions
@@ -21,9 +22,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DatePicker
@@ -71,31 +76,27 @@ fun LogWorkoutScreen(
     onBackClick: () -> Unit,
     onSaveFinished: () -> Unit
 ) {
-    // 1. DATA FROM VIEWMODEL
     val addedExercises = viewModel.addedExercises
     val knownExercises by viewModel.exerciseList.collectAsState(initial = emptyList())
-    // Explicitly typed Map State
     val prMapState = viewModel.personalRecords.collectAsState()
     val historyMapState = viewModel.exerciseNotesHistory.collectAsState()
 
-    // 2. STATE VARIABLES
     var showFinishDialog by remember { mutableStateOf(false) }
     var showExitDialog by remember { mutableStateOf(false) }
 
-    // Focus Mode Logic (-1 = List View)
+    // 👇 PASTE THIS HERE (Line ~65)
+    var showDeleteConfirmation by remember { mutableStateOf(false) }
+
+
     var expandedIndex by remember { mutableStateOf(-1) }
     val isFocusMode = expandedIndex != -1
-    // State for the "Enter Distance" Popup
     var showDistanceDialog by remember { mutableStateOf(false) }
     var exerciseIdForDistance by remember { mutableStateOf("") }
     var tempTotalDistance by remember { mutableStateOf("") }
 
-    // Editable Title State
     var isEditingTitle by remember { mutableStateOf(false) }
     var exerciseToDelete by remember { mutableStateOf<WorkoutExercise?>(null) }
 
-    // 🧠 SMART SESSION VOLUME
-    // Calculates Strength/Iso/Carries correctly, but IGNORES Cardio.
     val currentSessionVolume = remember(viewModel.addedExercises.toList()) {
         viewModel.addedExercises.sumOf { workoutExercise ->
             workoutExercise.sets.sumOf { set ->
@@ -103,44 +104,29 @@ fun LogWorkoutScreen(
                 val w = set.weight
                 val d = set.distance ?: 0.0
                 val t = set.time ?: 0
-
-                // 🛡️ CRASH FIX: Safe Type
                 val safeType = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
 
                 when (safeType) {
                     ExerciseType.STRENGTH -> (w * set.reps * multiplier).toInt()
                     ExerciseType.ISOMETRIC -> (w * t * multiplier).toInt()
                     ExerciseType.LoadedCarry -> (w * d * multiplier).toInt()
-
-                    // 🛑 CARDIO -> 0 Volume (Don't add "Incline * Speed" to the total)
                     ExerciseType.CARDIO -> 0
-
                     else -> 0
                 }
             }
         }
     }
 
-
-
-    // 3. EFFECTS (TRIGGERS)
-
-    // TRIGGER A: Auto-Expand new exercises
     LaunchedEffect(addedExercises.size) {
         if (addedExercises.isNotEmpty()) {
             expandedIndex = addedExercises.lastIndex
         }
     }
 
-    // TRIGGER B: AUTO-SAVE DRAFT
-    // This watches the list content. If you type a weight, this fires!
     LaunchedEffect(viewModel.addedExercises.toList(), viewModel.workoutName.value, viewModel.workoutNote.value) {
         viewModel.autoSaveDraft()
     }
 
-    // 4. POPUP LOGIC
-
-    // A. Add Exercise Dialog
     if (viewModel.showDialog.value) {
         ExerciseSelectionDialog(
             knownExercises = knownExercises,
@@ -160,26 +146,20 @@ fun LogWorkoutScreen(
         )
     }
 
-    // B. RESUME DRAFT DIALOG (This was likely missing!)
     if (viewModel.showResumeDialog.value) {
         AlertDialog(
-            onDismissRequest = { /* Force choice */ },
+            onDismissRequest = { },
             title = { Text("Unfinished Workout Found") },
             text = { Text("Do you want to resume your unsaved workout?") },
             confirmButton = {
-                TextButton(onClick = { viewModel.resumeDraft() }) {
-                    Text("Resume")
-                }
+                TextButton(onClick = { viewModel.resumeDraft() }) { Text("Resume") }
             },
             dismissButton = {
-                TextButton(onClick = { viewModel.discardDraft() }) {
-                    Text("Discard", color = MaterialTheme.colorScheme.error)
-                }
+                TextButton(onClick = { viewModel.discardDraft() }) { Text("Discard", color = MaterialTheme.colorScheme.error) }
             }
         )
     }
 
-    // C. Back Button Handler
     BackHandler(enabled = true) {
         if (isFocusMode) {
             expandedIndex = -1
@@ -190,7 +170,6 @@ fun LogWorkoutScreen(
         }
     }
 
-    // D. Exit Confirmation Dialog
     if (showExitDialog) {
         AlertDialog(
             onDismissRequest = { showExitDialog = false },
@@ -198,7 +177,6 @@ fun LogWorkoutScreen(
             text = { Text("You have unsaved progress. Are you sure you want to leave?") },
             confirmButton = {
                 TextButton(onClick = {
-                    // Discard the draft if they explicitly leave
                     viewModel.discardDraft()
                     showExitDialog = false
                     onBackClick()
@@ -210,7 +188,6 @@ fun LogWorkoutScreen(
         )
     }
 
-    // E. Finish Workout Dialog
     if (showFinishDialog) {
         AlertDialog(
             onDismissRequest = { showFinishDialog = false },
@@ -228,6 +205,7 @@ fun LogWorkoutScreen(
                     )
                 }
             },
+
             confirmButton = {
                 SwoleButton(
                     text = "Save & Finish",
@@ -242,12 +220,33 @@ fun LogWorkoutScreen(
             }
         )
     }
+        // ... after if (showFinishDialog) { ... } (Line ~180)
 
-    // 5. THE SCREEN LAYOUT
+        // 👇 PASTE THIS HERE
+        if (showDeleteConfirmation) {
+            AlertDialog(
+                onDismissRequest = { showDeleteConfirmation = false },
+                title = { Text("Delete Workout?") },
+                text = { Text("This action cannot be undone. Are you sure?") },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            // We reuse onSaveFinished to exit the screen after deleting
+                            viewModel.deleteCurrentWorkout(onDeleted = onSaveFinished)
+                            showDeleteConfirmation = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) { Text("Delete") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteConfirmation = false }) { Text("Cancel") }
+                }
+            )
+        }
+
     Scaffold(
         topBar = {
             if (!isFocusMode) {
-                // LIST MODE HEADER
                 val displayTitle = when {
                     viewModel.workoutName.value.isNotBlank() -> viewModel.workoutName.value
                     viewModel.addedExercises.isNotEmpty() -> "${viewModel.addedExercises.first().exercise.muscleGroup} Day"
@@ -269,7 +268,6 @@ fun LogWorkoutScreen(
                     )
                 )
             } else {
-                // FOCUS MODE HEADER
                 TopAppBar(
                     title = {
                         val title = if (expandedIndex in addedExercises.indices) {
@@ -297,11 +295,8 @@ fun LogWorkoutScreen(
                 .padding(16.dp)
                 .imePadding()
         ) {
-
-            // HEADER (Date & Name)
             AnimatedVisibility(visible = !isFocusMode) {
                 Column {
-                    // Date Picker
                     val datePickerState = rememberDatePickerState(
                         initialSelectedDateMillis = viewModel.workoutDate.value
                     )
@@ -341,10 +336,7 @@ fun LogWorkoutScreen(
 
                     if (currentSessionVolume > 0){
                         Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer
-
-                            ),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                             modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                         ){
                             Row(
@@ -352,11 +344,7 @@ fun LogWorkoutScreen(
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ){
-                                Icon(
-                                    imageVector = Icons.Default.Star,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
+                                Icon(Icons.Default.Star, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "Session Volume: ${java.text.NumberFormat.getIntegerInstance().format(currentSessionVolume)} lbs",
@@ -368,14 +356,11 @@ fun LogWorkoutScreen(
                         }
                     }
 
-                    // Editable Title Logic
                     if (isEditingTitle) {
                         var localName by remember { mutableStateOf(viewModel.workoutName.value) }
                         OutlinedTextField(
                             value = localName,
-                            onValueChange = { newText ->
-                                localName = newText
-                            },
+                            onValueChange = { localName = it },
                             placeholder = { Text("e.g., Chest Destruction") },
                             label = { Text("Workout Name") },
                             modifier = Modifier.fillMaxWidth(),
@@ -395,13 +380,11 @@ fun LogWorkoutScreen(
                             }
                         )
                     } else {
-                        // Smart Title Display
                         val smartName = when {
                             viewModel.workoutName.value.isNotBlank() -> viewModel.workoutName.value
                             viewModel.addedExercises.isNotEmpty() -> "${viewModel.addedExercises.first().exercise.muscleGroup} Day"
                             else -> "Tap to name workout"
                         }
-
                         Text(
                             text = smartName,
                             style = MaterialTheme.typography.headlineMedium,
@@ -419,32 +402,24 @@ fun LogWorkoutScreen(
                 }
             }
 
-            // EXERCISE LIST
             LazyColumn(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
             ) {
                 if (addedExercises.isEmpty()) {
-                    item {
-                        Text("No exercises. Add one to start!", modifier = Modifier.padding(top = 16.dp))
-                    }
+                    item { Text("No exercises. Add one to start!", modifier = Modifier.padding(top = 16.dp)) }
                 } else {
                     items(addedExercises.size) { index ->
                         if (!isFocusMode || expandedIndex == index) {
                             val workoutExercise = addedExercises[index]
-
-                            // Safe Map Lookup using the explicit state
                             val thisPr = prMapState.value[workoutExercise.exercise.name]
                             val thisHistory = historyMapState.value[workoutExercise.exercise.name] ?: emptyList()
-
 
                             Column(modifier = Modifier.animateContentSize()) {
                                 EditExerciseItem(
                                     workoutExercise = workoutExercise,
                                     isExpanded = expandedIndex == index,
-
-                                    // PR PASSED HERE
                                     personalRecord = thisPr,
                                     pastNotes = thisHistory,
                                     onDelete = {
@@ -458,7 +433,6 @@ fun LogWorkoutScreen(
                                         viewModel.loadHistory(workoutExercise.exercise.id, workoutExercise.exercise.name)
                                         viewModel.showHistoryDialog.value = true
                                     },
-
                                     onHeaderClick = {
                                         expandedIndex = if (expandedIndex == index) -1 else index
                                     },
@@ -484,6 +458,7 @@ fun LogWorkoutScreen(
                                         viewModel.addedExercises[index] = updatedExercise
                                     },
                                     onTreadmillSplit = { seconds, incline, level ->
+                                        // 1. UPDATE THE VIEWMODEL
                                         viewModel.splitCardioSet(
                                             exerciseId = workoutExercise.id,
                                             currentSetIndex = workoutExercise.sets.lastIndex,
@@ -491,9 +466,28 @@ fun LogWorkoutScreen(
                                             newIncline = incline,
                                             newLevel = level
                                         )
+
+                                        // 2. CHECK IF WE SHOULD SHOW THE POPUP 🧠
+                                        // Treadmill: incline = Weight (Speed), level = Reps (Inc)
                                         val isTreadmillCheck = workoutExercise.exercise.name.contains("Treadmill", ignoreCase = true)
-                                        val isStopping = if (isTreadmillCheck) level == 0 else incline == 0.0
-                                        if (isStopping && workoutExercise.sets.isNotEmpty()){
+
+                                        // ✅ FIXED LOGIC HERE:
+                                        // If Treadmill: Stop when Incline (which holds Speed) == 0.0
+                                        // If Bike/Stairs: Stop when Level (which holds Weight) == 0.0 (Wait, level passed here is Int Reps)
+
+                                        // Actually, let's look at what 'incline' and 'level' are passed from EditExerciseItem:
+                                        // EditExerciseItem calls this as: onTreadmillSplit(seconds, primaryValue, secondaryValue)
+                                        // primaryValue = Level (Speed/Weight) -> "incline" arg here
+                                        // secondaryValue = Incline (Reps) -> "level" arg here
+
+                                        // So 'incline' arg IS the Speed (Weight).
+                                        // And 'level' arg IS the Incline (Reps).
+                                        // Confusing naming in the lambda, but the logic should be:
+
+                                        val speedOrLevel = incline // This is the Primary Value (Weight)
+
+                                        // We only stop if Speed drops to 0.
+                                        if (speedOrLevel == 0.0 && workoutExercise.sets.isNotEmpty()){
                                             exerciseIdForDistance = workoutExercise.id
                                             tempTotalDistance = ""
                                             showDistanceDialog = true
@@ -507,34 +501,89 @@ fun LogWorkoutScreen(
                 }
             }
 
-            // BOTTOM BUTTONS
             AnimatedVisibility(visible = !isFocusMode) {
+
                 Column {
                     Spacer(modifier = Modifier.height(8.dp))
-                    SwoleButton(
-                        text = "Add Exercise",
-                        onClick = { viewModel.showDialog.value = true }
-                    )
+                    SwoleButton(text = "Add Exercise", onClick = { viewModel.showDialog.value = true })
                     Spacer(modifier = Modifier.height(8.dp))
-                    SwoleButton(
-                        text = "Finish Workout",
-                        onClick = { showFinishDialog = true }
-                    )
+                    SwoleButton(text = "Finish Workout", onClick = { showFinishDialog = true })
+
+                    // 👇 PASTE THIS HERE (Line ~530)
+                    // 🗑️ DELETE BUTTON (Only visible if Editing)
+                    if (viewModel.currentWorkoutId != null) {
+                        Spacer(modifier = Modifier.height(24.dp))
+                        OutlinedButton(
+                            onClick = { showDeleteConfirmation = true },
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Delete Entire Workout")
+                        }
+                    }
+                }
+
+            }
+
+            // REPLACE THE OLD "Done Editing" BUTTON WITH NAVIGATION ROW 👇
+            AnimatedVisibility(visible = isFocusMode) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // ⬆️ PREVIOUS EXERCISE (Up in the list)
+                    androidx.compose.material3.FilledTonalIconButton(
+                        onClick = {
+                            if (expandedIndex > 0) expandedIndex--
+                        },
+                        enabled = expandedIndex > 0, // Disable if at top
+                        modifier = Modifier.size(56.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowUp,
+                            contentDescription = "Previous Exercise",
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+
+                    // ❌ CLOSE FOCUS
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = { expandedIndex = -1 },
+                        modifier = Modifier.height(56.dp)
+                    ) {
+                        Text("Done")
+                    }
+
+                    // ⬇️ NEXT EXERCISE (Down in the list)
+                    androidx.compose.material3.FilledTonalIconButton(
+                        onClick = {
+                            if (expandedIndex < addedExercises.lastIndex) expandedIndex++
+                        },
+                        enabled = expandedIndex < addedExercises.lastIndex, // Disable if at bottom
+                        modifier = Modifier.size(56.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Next Exercise",
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
                 }
             }
 
-            AnimatedVisibility(visible = isFocusMode) {
-                SwoleButton(
-                    text = "Done Editing",
-                    onClick = { expandedIndex = -1 }
-                )
-            }
             if (viewModel.showHistoryDialog.value) {
                 val history by viewModel.exerciseHistory.collectAsState()
                 ExerciseHistoryDialog(
                     exerciseName = viewModel.historyTitle,
                     history = history,
-                onDismiss = { viewModel.showHistoryDialog.value = false }
+                    onDismiss = { viewModel.showHistoryDialog.value = false }
                 )
             }
             if (exerciseToDelete != null) {
@@ -553,7 +602,6 @@ fun LogWorkoutScreen(
                     }
                 )
             }
-            // --- THE DISTANCE POPUP ---
             if (showDistanceDialog) {
                 AlertDialog(
                     onDismissRequest = { showDistanceDialog = false },
@@ -564,7 +612,6 @@ fun LogWorkoutScreen(
                             OutlinedTextField(
                                 value = tempTotalDistance,
                                 onValueChange = {
-                                    // Only allow numbers and one decimal point
                                     if (it.count { char -> char == '.' } <= 1 && it.all { char -> char.isDigit() || char == '.' }) {
                                         tempTotalDistance = it
                                     }
@@ -580,7 +627,6 @@ fun LogWorkoutScreen(
                         Button(onClick = {
                             val dist = tempTotalDistance.toDoubleOrNull() ?: 0.0
                             if (dist > 0) {
-                                // ✨ APPLY THE MAGIC MATH TO THIS SPECIFIC EXERCISE
                                 viewModel.applyDistanceToExercise(exerciseIdForDistance, dist)
                             }
                             showDistanceDialog = false
@@ -591,7 +637,6 @@ fun LogWorkoutScreen(
                     }
                 )
             }
-
         }
     }
 }

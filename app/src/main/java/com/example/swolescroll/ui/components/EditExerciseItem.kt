@@ -4,15 +4,16 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -48,11 +49,14 @@ fun EditExerciseItem(
     // --- LIVE TIMER STATE ---
     var activeSeconds by remember { mutableStateOf(0) }
     val currentSet = workoutExercise.sets.lastOrNull()
-    val currentIncline = currentSet?.weight ?: 0.0
-    val currentLevelRaw = if (currentSet != null) currentSet.reps else 0
-    val currentLevel = currentLevelRaw / 10.0 // Display value (e.g., 1.2)
 
-    // Smart Detection
+    // 🛡️ CRASH FIX: Force a default type if it is null in the database
+    val safeType = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
+
+    // MAPPING: Weight = Level, Reps = Incline
+    val currentLevelRaw = if (currentSet != null) currentSet.weight else 0.0
+    val currentInclineRaw = if (currentSet != null) currentSet.reps else 0
+
     val isStairs = remember(workoutExercise.exercise.name) {
         workoutExercise.exercise.name.contains("Stair", ignoreCase = true) ||
                 workoutExercise.exercise.name.contains("Step", ignoreCase = true)
@@ -62,17 +66,14 @@ fun EditExerciseItem(
                 workoutExercise.exercise.name.contains("Run", ignoreCase = true)
     }
 
-    // Helpers
+    // Smart "Is Moving" Check
     val primaryVal = currentSet?.weight ?: 0.0
     val secondaryValRaw = if (isTreadmill) (currentSet?.reps ?: 0) else 0
+    val isMoving = primaryVal > 0.0
 
-    // Smart "Is Moving" Check
-    val isMoving = if (isTreadmill) secondaryValRaw > 0 else primaryVal > 0.0
-
-    // ⏱️ UPDATED TIMER LOGIC
-    LaunchedEffect(workoutExercise.exercise.type, isExpanded, isMoving) {
-        // Run for ANY cardio if expanded and moving
-        if (workoutExercise.exercise.type == ExerciseType.CARDIO && isExpanded && isMoving) {
+    // ⏱️ TIMER LOGIC (Now using safeType)
+    LaunchedEffect(safeType, isExpanded, isMoving) {
+        if (safeType == ExerciseType.CARDIO && isExpanded && isMoving) {
             val startTime = System.currentTimeMillis()
             val initialSeconds = activeSeconds
 
@@ -92,7 +93,7 @@ fun EditExerciseItem(
             val safeDist = set.distance ?: 0.0
             val safeTime = set.time ?: 0
 
-            when (workoutExercise.exercise.type) {
+            when (safeType) {
                 ExerciseType.STRENGTH -> (safeWeight * set.reps * multiplier).toInt()
                 ExerciseType.ISOMETRIC -> (safeWeight * safeTime * multiplier).toInt()
                 ExerciseType.LoadedCarry -> (safeWeight * safeDist * multiplier).toInt()
@@ -108,20 +109,25 @@ fun EditExerciseItem(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp)
-            .clickable {
-                if (isExpanded && isMoving) {
-                    showExitWarning = true
-                } else {
-                    onHeaderClick()
-                }
-            },
+            .padding(vertical = 8.dp),
         colors = CardDefaults.cardColors(containerColor = if (isExpanded) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant),
         elevation = CardDefaults.cardElevation(defaultElevation = if (isExpanded) 4.dp else 1.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             // Header
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        if (isExpanded && isMoving) {
+                            showExitWarning = true
+                        } else {
+                            onHeaderClick()
+                        }
+                    },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(text = workoutExercise.exercise.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     if (currentVolume > 0) {
@@ -129,28 +135,17 @@ fun EditExerciseItem(
                     }
 
                     if (personalRecord != null) {
-                        // 🧠 FINAL PR DISPLAY LOGIC
-                        val prText = remember(personalRecord, workoutExercise.exercise.type) {
-
-                            // 1. TRUST THE VIEWMODEL: If it has units we added (mi, stairs, yds), show as is.
-                            if (personalRecord.contains("mi") ||
-                                personalRecord.contains("stairs") ||
-                                personalRecord.contains("yds")) { // 👈 Added "yds" check here!
+                        val prText = remember(personalRecord, safeType) {
+                            if (personalRecord.contains("mi") || personalRecord.contains("stairs") || personalRecord.contains("yds")) {
                                 personalRecord
-                            }
-                            // 2. CARDIO FALLBACK: If it still says "lbs", it's an old "Level" record.
-                            else if (workoutExercise.exercise.type == ExerciseType.CARDIO && personalRecord.contains("lbs")) {
+                            } else if (safeType == ExerciseType.CARDIO && personalRecord.contains("lbs")) {
                                 val rawNum = personalRecord.split(" ").firstOrNull() ?: personalRecord
                                 "Max Lvl $rawNum"
-                            }
-                            // 3. CLEANUP FOR OTHERS
-                            else {
-                                // Only strip text for ISOMETRIC now (Carries are handled above)
-                                if (workoutExercise.exercise.type == ExerciseType.ISOMETRIC) {
+                            } else {
+                                if (safeType == ExerciseType.ISOMETRIC) {
                                     val rawNum = personalRecord.split(" ").firstOrNull() ?: personalRecord
                                     "$rawNum lbs"
                                 } else {
-                                    // Standard Strength
                                     if (personalRecord.contains("lbs")) personalRecord else "$personalRecord lbs"
                                 }
                             }
@@ -163,8 +158,6 @@ fun EditExerciseItem(
                             fontWeight = FontWeight.SemiBold
                         )
                     }
-
-
                 }
                 Column {
                     Row {
@@ -185,36 +178,8 @@ fun EditExerciseItem(
 
                     if (selectedTab == 0) {
                         Column {
-
-                            // 👇 CHANGED: Check for ANY Cardio, not just Treadmill
-                            if (workoutExercise.exercise.type == ExerciseType.CARDIO && isExpanded) {
-
-                                // --- DATA MAPPING ---
-                                val currentSet = workoutExercise.sets.lastOrNull()
-
-                                // PRIMARY VALUE (Double):
-                                // If Treadmill, this is Incline (weight).
-                                // If Bike, this is Level (weight).
-                                val primaryVal = currentSet?.weight ?: 0.0
-
-                                // SECONDARY VALUE (Int):
-                                // If Treadmill, this is Level (reps).
-                                // If Bike, we don't use this (0).
-                                val secondaryValRaw = if (isTreadmill) (currentSet?.reps ?: 0) else 0
-
-                                // TIMER LOGIC: Is the machine moving?
-                                // Treadmill: Moves if Reps (Level) > 0
-                                // Bike: Moves if Weight (Level) > 0
-                                // Smart "Is Moving" Check
-                                // 🛡️ ONLY true if it's CARDIO and the numbers are > 0
-                                val isMoving = remember(workoutExercise.exercise.type, primaryVal, secondaryValRaw) {
-                                    if (workoutExercise.exercise.type == ExerciseType.CARDIO) {
-                                        if (isTreadmill) secondaryValRaw > 0 else primaryVal > 0.0
-                                    } else {
-                                        false // Never block the back button for Strength/Isometric/Carries
-                                    }
-                                }
-
+                            // Using safeType here
+                            if (safeType == ExerciseType.CARDIO && isExpanded) {
 
                                 Text("Live Controls", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
 
@@ -232,17 +197,13 @@ fun EditExerciseItem(
                                     primaryValue = primaryVal,
                                     secondaryValueRaw = secondaryValRaw,
                                     onPrimaryChange = { newValue ->
-                                        // SAVE & RESET
-                                        // If Treadmill: newValue is Incline.
-                                        // If Bike: newValue is Level (mapped to Incline param, which goes to weight).
                                         onTreadmillSplit(activeSeconds, newValue, secondaryValRaw)
                                     },
                                     onSecondaryChange = { newRaw ->
-                                        // SAVE & RESET (Treadmill Only)
                                         onTreadmillSplit(activeSeconds, primaryVal, newRaw)
                                     }
                                 )
-                                Divider(modifier = Modifier.padding(vertical = 8.dp))
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                             }
 
 
@@ -250,16 +211,16 @@ fun EditExerciseItem(
                             Row(modifier = Modifier.fillMaxWidth()) {
                                 Text("Set", modifier = Modifier.width(28.dp), style = MaterialTheme.typography.labelSmall)
 
-                                when (workoutExercise.exercise.type) {
+                                when (safeType) {
                                     ExerciseType.CARDIO -> {
                                         if (isTreadmill) {
                                             Text("Dist", modifier = Modifier.weight(0.8f), style = MaterialTheme.typography.labelSmall)
                                             Spacer(Modifier.width(4.dp))
                                             Text("Time", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                             Spacer(Modifier.width(4.dp))
-                                            Text("Inc", modifier = Modifier.weight(0.6f), style = MaterialTheme.typography.labelSmall)
-                                            Spacer(Modifier.width(4.dp))
                                             Text("Lvl", modifier = Modifier.weight(0.6f), style = MaterialTheme.typography.labelSmall)
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Inc", modifier = Modifier.weight(0.6f), style = MaterialTheme.typography.labelSmall)
                                         } else {
                                             Text(if (isStairs) "Stairs" else "Dist", modifier = Modifier.weight(0.8f), style = MaterialTheme.typography.labelSmall)
                                             Spacer(Modifier.width(4.dp))
@@ -291,7 +252,7 @@ fun EditExerciseItem(
                                 SetInputRow(
                                     setNumber = index + 1,
                                     set = set,
-                                    type = workoutExercise.exercise.type,
+                                    type = safeType, // Use Safe Type
                                     isEditable = index == workoutExercise.sets.lastIndex,
                                     isStairs = isStairs,
                                     isTreadmill = isTreadmill,
@@ -340,6 +301,10 @@ fun EditExerciseItem(
     }
 }
 
+// -------------------------------------------------------------------------
+// 🛠️ HELPER FUNCTIONS
+// -------------------------------------------------------------------------
+
 @Composable
 fun SetInputRow(
     setNumber: Int,
@@ -352,9 +317,10 @@ fun SetInputRow(
     onRemove: () -> Unit
 ) {
     val safeTime = set.time ?: 0
+    // Weight Text Logic
     var weightText by remember(set.id) { mutableStateOf(if (set.weight == 0.0) "" else set.weight.toString().removeSuffix(".0")) }
 
-    // 🧠 1. MATH TRICK: If treadmill, divide by 10 to show decimal. If not, normal reps.
+    // Reps Text Logic
     var repsText by remember(set.id) {
         mutableStateOf(
             if (isTreadmill) {
@@ -382,7 +348,6 @@ fun SetInputRow(
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-
                         // 1. DISTANCE
                         CompactTextField(
                             value = distanceText,
@@ -392,42 +357,59 @@ fun SetInputRow(
                             keyboardType = KeyboardType.Decimal,
                             imeAction = ImeAction.Next
                         )
-
                         // 2. TIME
                         CompactTimeInput(minutesText, secondsText, modifier = Modifier.weight(1f),
                             onMinChange = { minutesText = it; updateTime(it, secondsText) { t -> onUpdate(set.copy(time = t)) } },
                             onSecChange = { secondsText = it; updateTime(minutesText, it) { t -> onUpdate(set.copy(time = t)) } }
                         )
 
-                        // 3. INCLINE (Treadmill Only) - Mapped to Weight (Double)
+                        // 3. LEVEL (Was Incline) - Mapped to Weight (Double)
                         if (isTreadmill) {
                             CompactTextField(
                                 value = weightText,
                                 onValueChange = { if (validateDecimal(it)) { weightText = it; onUpdate(set.copy(weight = it.toDoubleOrNull() ?: 0.0)) } },
-                                placeholder = "",
+                                placeholder = "Lvl", // 🆕 Changed from ""
                                 modifier = Modifier.weight(0.6f),
                                 keyboardType = KeyboardType.Decimal,
                                 imeAction = ImeAction.Next
                             )
 
-                            // 4. LEVEL (Treadmill Only) - Mapped to Reps (Int * 10)
+                            // 🔄 SWAP BUTTON (Use this to fix old history!)
+                            IconButton(
+                                onClick = {
+                                    val valInWeightSlot = set.weight
+                                    val valInRepsSlot = set.reps / 10.0
+                                    onUpdate(set.copy(
+                                        weight = valInRepsSlot,
+                                        reps = (valInWeightSlot * 10).toInt()
+                                    ))
+                                },
+                                modifier = Modifier.size(32.dp).padding(horizontal = 2.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Swap",
+                                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
+                                )
+                            }
+
+                            // 4. INCLINE (Was Level) - Mapped to Reps (Int * 10)
                             CompactTextField(
                                 value = repsText,
                                 onValueChange = {
                                     if (validateDecimal(it)) {
                                         repsText = it
-                                        // 🧠 2. MATH TRICK: Multiply input by 10 to save as Int
                                         val decimalValue = it.toDoubleOrNull() ?: 0.0
                                         onUpdate(set.copy(reps = (decimalValue * 10).toInt()))
                                     }
                                 },
-                                placeholder = "Lvl",
+                                placeholder = "Inc", // 🆕 Changed from "Lvl"
                                 modifier = Modifier.weight(0.6f),
-                                keyboardType = KeyboardType.Decimal, // Allows decimal keyboard now!
+                                keyboardType = KeyboardType.Decimal,
                                 imeAction = ImeAction.Done
                             )
                         } else {
-                            // Standard 3-box layout for others (Level mapped to Weight)
+                            // Standard layout (Stairs/Bike)
                             CompactTextField(
                                 value = weightText,
                                 onValueChange = { if (validateDecimal(it)) { weightText = it; onUpdate(set.copy(weight = it.toDoubleOrNull() ?: 0.0)) } },
@@ -440,21 +422,19 @@ fun SetInputRow(
                     }
                 }
             } else {
-                // Read Only View
+                // READ ONLY VIEW
                 Text("${set.distance} ${if (isStairs) "flr" else "mi"}", modifier = Modifier.weight(0.8f), style = readOnlyTextStyle)
                 Text(set.timeFormatted(), modifier = Modifier.weight(1f), style = readOnlyTextStyle, textAlign = TextAlign.Center)
 
                 if (isTreadmill) {
-                    // Show Incline (Weight)
-                    Text("${set.weight}%", modifier = Modifier.weight(0.6f), style = readOnlyTextStyle, textAlign = TextAlign.Center)
-                    // Show Level (Reps / 10)
-                    Text("Lvl ${set.reps / 10.0}", modifier = Modifier.weight(0.6f), style = readOnlyTextStyle, textAlign = TextAlign.End)
+                    // 🧠 3. READ ONLY: Display Weight as Lvl, Reps as Inc
+                    Text("Lvl ${set.weight}", modifier = Modifier.weight(0.6f), style = readOnlyTextStyle, textAlign = TextAlign.Center)
+                    Text("${set.reps / 10.0}%", modifier = Modifier.weight(0.6f), style = readOnlyTextStyle, textAlign = TextAlign.End)
                 } else {
                     Text("Lvl ${set.weight}".removeSuffix(".0"), modifier = Modifier.weight(0.8f), style = readOnlyTextStyle, textAlign = TextAlign.End)
                 }
             }
         }
-        // ... (The rest of the ISOMETRIC / LOADED CARRY / STRENGTH blocks stay exactly the same) ...
         else if (type == ExerciseType.ISOMETRIC) {
             if (isEditable) {
                 OutlinedTextField(value = weightText, onValueChange = { if (validateDecimal(it)) { weightText = it; onUpdate(set.copy(weight = it.toDoubleOrNull() ?: 0.0)) } }, modifier = Modifier.weight(1f), placeholder = { Text("Lbs") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next))
@@ -509,12 +489,16 @@ fun CompactTextField(
         onValueChange = onValueChange,
         modifier = modifier.padding(horizontal = 4.dp),
         singleLine = true,
-        textStyle = MaterialTheme.typography.bodyLarge.copy(textAlign = TextAlign.Center),
+        textStyle = MaterialTheme.typography.bodyLarge.copy(textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurface),
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
         decorationBox = { innerTextField ->
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 if (value.isEmpty()) {
-                    Text(text = placeholder, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                    Text(
+                        text = placeholder,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
                 }
                 innerTextField()
             }
@@ -530,7 +514,11 @@ fun CompactTimeInput(
     onMinChange: (String) -> Unit,
     onSecChange: (String) -> Unit
 ) {
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
         CompactTextField(
             value = minutes,
             onValueChange = { if (it.all { c -> c.isDigit() }) onMinChange(it) },
@@ -552,17 +540,45 @@ fun CompactTimeInput(
 }
 
 @Composable
+fun ControlCluster(
+    label: String,
+    value: String,
+    onDecrease: () -> Unit,
+    onIncrease: () -> Unit
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FilledIconButton(onClick = onDecrease, modifier = Modifier.size(48.dp)) {
+                Text("-", style = MaterialTheme.typography.titleLarge)
+            }
+            Text(
+                text = value,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+            FilledIconButton(onClick = onIncrease, modifier = Modifier.size(48.dp)) {
+                Text("+", style = MaterialTheme.typography.titleLarge)
+            }
+        }
+    }
+}
+
+@Composable
 fun CardioControls(
     isTreadmill: Boolean,
-    primaryValue: Double, // Incline (Treadmill) OR Level (Bike)
-    secondaryValueRaw: Int, // Level (Treadmill only)
+    primaryValue: Double,
+    secondaryValueRaw: Int,
     onPrimaryChange: (Double) -> Unit,
     onSecondaryChange: (Int) -> Unit
 ) {
-    // For Treadmill, Primary is Incline (0.5 steps).
-    // For Bike, Primary is Level (1.0 steps).
-    val primaryLabel = if (isTreadmill) "Incline" else "Level"
-    val primaryStep = if (isTreadmill) 0.5 else 1.0
+    val primaryLabel = "Level"
+    val primaryStep = 1.0
 
     val displaySecondary = if (secondaryValueRaw == 0) "0.0" else (secondaryValueRaw / 10.0).toString()
 
@@ -570,8 +586,6 @@ fun CardioControls(
         modifier = Modifier.fillMaxWidth().padding(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // --- ROW 1: The Main Control ---
-        // (Incline for Treadmill, Level for everything else)
         ControlCluster(
             label = primaryLabel,
             value = "$primaryValue",
@@ -584,19 +598,18 @@ fun CardioControls(
             }
         )
 
-        // --- ROW 2: The Extra Control (Treadmill Only) ---
         if (isTreadmill) {
-            Divider(modifier = Modifier.padding(vertical = 16.dp).width(200.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp).width(200.dp))
 
             ControlCluster(
-                label = "Level",
+                label = "Incline",
                 value = displaySecondary,
                 onDecrease = {
-                    val newItem = if (secondaryValueRaw <= 10) 0 else secondaryValueRaw - 1
+                    val newItem = if (secondaryValueRaw <= 0) 0 else secondaryValueRaw - 5
                     onSecondaryChange(newItem)
                 },
                 onIncrease = {
-                    val newItem = if (secondaryValueRaw == 0) 10 else secondaryValueRaw + 1
+                    val newItem = secondaryValueRaw + 5
                     onSecondaryChange(newItem)
                 }
             )
@@ -604,37 +617,7 @@ fun CardioControls(
     }
 }
 
-
-
-@Composable
-fun ControlCluster(
-    label: String,
-    value: String,
-    onDecrease: () -> Unit,
-    onIncrease: () -> Unit
-) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            // Big Minus Button
-            FilledIconButton(onClick = onDecrease, modifier = Modifier.size(48.dp)) {
-                Text("-", style = MaterialTheme.typography.titleLarge)
-            }
-            // The Read Only Field
-            Text(
-                text = value,
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-            // Big Plus Button
-            FilledIconButton(onClick = onIncrease, modifier = Modifier.size(48.dp)) {
-                Text("+", style = MaterialTheme.typography.titleLarge)
-            }
-        }
-    }
-}
-
+// Logic Helpers
 fun validateDecimal(text: String): Boolean {
     return text.count { it == '.' } <= 1 && text.all { it.isDigit() || it == '.' }
 }
