@@ -14,15 +14,16 @@ I accepted the challenge to build a superior tool from scratch, treating my dad 
 
 ## 📸 Demo & Gallery
 
-![swole-scroll-demo](https://github.com/user-attachments/assets/d980c090-1d63-4829-8259-a301dcb4a2ce)
+<img src="https://github.com/user-attachments/assets/d980c090-1d63-4829-8259-a301dcb4a2ce" width="360" alt="Swole Scroll Demo">
+<br>
+<br>
 *The app adapts UI inputs dynamically based on the exercise type (e.g., Distance/Weight for Carries vs. Reps/Weight for Press).*
 
 ### Feature Highlights
 
 | **Long-Term Tracking** | **Session Journaling** |
 |:---:|:---:|
-| <img src="https://github.com/user-attachments/assets/1e4a5cc4-1ac3-438e-be14-dc9d7b8e18cf" width="300" alt="History View"> | <img src="https://github.com/user-attachments/assets/cb032ee8-3915-42a8-a9a7-ce0a413129e4" width = "300" alt="Notes View" />
-RE)" width="300" alt="Notes View"> |
+| <img src="https://github.com/user-attachments/assets/1e4a5cc4-1ac3-438e-be14-dc9d7b8e18cf" width="300" alt="History View"> | <img src="https://github.com/user-attachments/assets/cb032ee8-3915-42a8-a9a7-ce0a413129e4" width="300" alt="Notes View"> |
 | *Volume tracking with automatic PR calculation.* | *Contextual notes to track form cues and subjective feel.* |
 
 | **Smart Architecture** | **Data Sovereignty** |
