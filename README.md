@@ -21,7 +21,8 @@ I accepted the challenge to build a superior tool from scratch, treating my dad 
 
 | **Long-Term Tracking** | **Session Journaling** |
 |:---:|:---:|
-| <img src="https://github.com/user-attachments/assets/1e4a5cc4-1ac3-438e-be14-dc9d7b8e18cf" width="300" alt="History View"> | <img src="(PASTE_YOUR_NOTES_LINK_HERE)" width="300" alt="Notes View"> |
+| <img src="https://github.com/user-attachments/assets/1e4a5cc4-1ac3-438e-be14-dc9d7b8e18cf" width="300" alt="History View"> | <img src="https://github.com/user-attachments/assets/cb032ee8-3915-42a8-a9a7-ce0a413129e4" width = "300" alt="Notes View" />
+RE)" width="300" alt="Notes View"> |
 | *Volume tracking with automatic PR calculation.* | *Contextual notes to track form cues and subjective feel.* |
 
 | **Smart Architecture** | **Data Sovereignty** |
