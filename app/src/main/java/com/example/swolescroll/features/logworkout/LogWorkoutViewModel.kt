@@ -87,6 +87,11 @@ class LogWorkoutViewModel(
                                 val isStairs = name.contains("Stair", true) || name.contains("Step", true)
                                 val unit = if (isStairs) "stairs" else "mi"
 
+                                val distStr = String.format("%.2f", totalDist)
+                                    .removeSuffix("0")
+                                    .removeSuffix("0")
+                                    .removeSuffix(".")
+
                                 // Helper to format time (e.g. 3600s -> "60:00")
                                 val h = totalSeconds / 3600
                                 val m = (totalSeconds % 3600) / 60
@@ -107,7 +112,7 @@ class LogWorkoutViewModel(
                                 }
 
                                 // RETURN: Pair(The Distance Number, The Nice String)
-                                Pair(totalDist, "$totalDist $unit in $timeFormatted$intensityStr")
+                                Pair(totalDist, "$distStr $unit in $timeFormatted$intensityStr")
                             }
 
                             // NON-CARDIO: Standard Max Logic
@@ -473,6 +478,45 @@ class LogWorkoutViewModel(
         val updatedSets = distributeTotalDistance(distance, activeExercise.sets)
         addedExercises[index] = activeExercise.copy(sets = updatedSets)
     }
+    // In LogWorkoutViewModel.kt
+
+    // ⚡ SUPERSET HELPER: Checks if we need a new set before switching
+    fun prepareForSuperset(targetIndex: Int) {
+        // 1. Safety Checks
+        if (targetIndex < 0 || targetIndex >= addedExercises.size) return
+
+        val targetExercise = addedExercises[targetIndex]
+        val lastSet = targetExercise.sets.lastOrNull()
+
+        // 2. Decide if we need a new line
+        val needsNewSet = if (lastSet == null) {
+            true // No sets at all? Definitely add one.
+        } else {
+            // Check if the last set is "In Use"
+            val type = targetExercise.exercise.type ?: ExerciseType.STRENGTH
+            val isUsed = when (type) {
+                ExerciseType.CARDIO -> (lastSet.distance ?: 0.0) > 0 || (lastSet.time ?: 0) > 0
+                // For lifting: If you typed Weight OR Reps, we assume that line is taken.
+                else -> (lastSet.weight > 0.0) || (lastSet.reps > 0)
+            }
+            isUsed
+        }
+
+        // 3. Add the set if needed
+        if (needsNewSet) {
+            val newSet = Set(
+                id = java.util.UUID.randomUUID().toString(),
+                weight = 0.0,
+                reps = 0,
+                distance = 0.0,
+                time = 0
+            )
+            // Update the list
+            val updatedSets = targetExercise.sets + newSet
+            addedExercises[targetIndex] = targetExercise.copy(sets = updatedSets)
+        }
+    }
+
 }
 
 // Update Factory to pass Application and DB
