@@ -110,6 +110,10 @@ fun LogWorkoutScreen(
                     ExerciseType.STRENGTH -> (w * set.reps * multiplier).toInt()
                     ExerciseType.ISOMETRIC -> (w * t * multiplier).toInt()
                     ExerciseType.LoadedCarry -> (w * d * multiplier).toInt()
+                    ExerciseType.TWENTY_ONES -> {
+                        val rawVol = (w * set.reps * multiplier)
+                        ((rawVol * 2)/3).toInt()
+                    }
                     ExerciseType.CARDIO -> 0
                     else -> 0
                 }
@@ -337,7 +341,9 @@ fun LogWorkoutScreen(
                     if (currentSessionVolume > 0){
                         Card(
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
                         ){
                             Row(
                                 modifier = Modifier.padding(12.dp),
@@ -416,11 +422,64 @@ fun LogWorkoutScreen(
                             val thisPr = prMapState.value[workoutExercise.exercise.name]
                             val thisHistory = historyMapState.value[workoutExercise.exercise.name] ?: emptyList()
 
+                            // get historical pr
+                            val historyPrString = prMapState.value[workoutExercise.exercise.name]
+                            val currentBestValue = remember(workoutExercise.sets, workoutExercise.exercise.type){
+                                val type = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
+                                when (type) {
+                                    ExerciseType.CARDIO -> workoutExercise.sets.sumOf { it.distance ?: 0.0 }
+                                    ExerciseType.LoadedCarry -> workoutExercise.sets.maxOfOrNull { it.weight } ?: 0.0
+                                    else -> workoutExercise.sets.maxOfOrNull { it.weight } ?: 0.0
+                                }
+                            }
+                            val historyValue = remember(historyPrString){
+                                historyPrString?.split(" ")?.firstOrNull()?.toDoubleOrNull() ?: 0.0
+                            }
+                            val bestSetToday = remember(workoutExercise.sets){
+                                workoutExercise.sets.maxByOrNull { it.weight }
+                            }
+                            val currentBestWeight = bestSetToday?.weight ?: 0.0
+                            val currentBestReps = bestSetToday?.reps ?: 0
+                            val currentBestDistance = bestSetToday?.distance ?: 0.0
+                            val currentBestTime = bestSetToday?.time ?: 0
+
+                            val isValidSet = when (workoutExercise.exercise.type) {
+                                ExerciseType.CARDIO -> currentBestValue > 0 // Distance > 0
+                                ExerciseType.LoadedCarry -> currentBestDistance > 0
+                                ExerciseType.ISOMETRIC -> currentBestTime > 0
+                                else -> currentBestReps > 0 // Strength/21s needs reps
+                            }
+
+                            var displayPr = historyPrString
+                            var isNewRecord = false
+                            if (historyValue > 0 && currentBestWeight > historyValue && isValidSet){
+                                isNewRecord = true
+                                displayPr = when (workoutExercise.exercise.type){
+                                    ExerciseType.CARDIO -> {
+                                        // For Cardio, we sum everything, so we don't use 'bestSetToday'
+                                        val totalDist = workoutExercise.sets.sumOf { it.distance ?: 0.0 }
+                                        val cleanDist = String.format("%.2f", totalDist).removeSuffix("0").removeSuffix("0").removeSuffix(".")
+                                        "$cleanDist ${if(workoutExercise.exercise.name.contains("Stair")) "stairs" else "mi"}"
+                                    }
+                                    ExerciseType.LoadedCarry -> {
+                                        val dist = bestSetToday?.distance ?: 0.0
+                                        // Optional: Clean up "50.0" to "50"
+                                        val cleanDist = dist.toString().removeSuffix(".0")
+                                        "$currentBestWeight lbs for $cleanDist yds"
+                                    }
+                                    ExerciseType.ISOMETRIC -> "$currentBestWeight lbs"
+
+                                    // STRENGTH & 21s: Show "Weight x Reps"
+                                    else -> "$currentBestWeight lbs x $currentBestReps"
+                                }
+                            }
+
                             Column(modifier = Modifier.animateContentSize()) {
                                 EditExerciseItem(
                                     workoutExercise = workoutExercise,
                                     isExpanded = expandedIndex == index,
-                                    personalRecord = thisPr,
+                                    personalRecord = displayPr,
+                                    isNewPr = isNewRecord,
                                     pastNotes = thisHistory,
                                     onDelete = {
                                         if (workoutExercise.sets.isEmpty()){
@@ -541,7 +600,11 @@ fun LogWorkoutScreen(
                     // ⬆️ PREVIOUS EXERCISE (Up in the list)
                     androidx.compose.material3.FilledTonalIconButton(
                         onClick = {
-                            if (expandedIndex > 0) expandedIndex--
+                            if (expandedIndex > 0) {
+                                val target = expandedIndex - 1
+                                viewModel.prepareForSuperset(target)
+                                expandedIndex = target
+                            }
                         },
                         enabled = expandedIndex > 0, // Disable if at top
                         modifier = Modifier.size(56.dp)
@@ -564,7 +627,11 @@ fun LogWorkoutScreen(
                     // ⬇️ NEXT EXERCISE (Down in the list)
                     androidx.compose.material3.FilledTonalIconButton(
                         onClick = {
-                            if (expandedIndex < addedExercises.lastIndex) expandedIndex++
+                            if (expandedIndex < addedExercises.lastIndex) {
+                                val target = expandedIndex + 1
+                                viewModel.prepareForSuperset(target)
+                                expandedIndex = target
+                            }
                         },
                         enabled = expandedIndex < addedExercises.lastIndex, // Disable if at bottom
                         modifier = Modifier.size(56.dp)

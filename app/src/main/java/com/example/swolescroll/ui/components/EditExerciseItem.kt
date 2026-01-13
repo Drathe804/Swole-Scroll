@@ -2,6 +2,14 @@ package com.example.swolescroll.ui.components
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColor
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -18,6 +26,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -33,6 +43,7 @@ fun EditExerciseItem(
     workoutExercise: WorkoutExercise,
     isExpanded: Boolean,
     personalRecord: String?,
+    isNewPr: Boolean,
     pastNotes: List<String> = emptyList(),
     onInfoClick: () -> Unit,
     onHeaderClick: () -> Unit,
@@ -49,6 +60,25 @@ fun EditExerciseItem(
     // --- LIVE TIMER STATE ---
     var activeSeconds by remember { mutableStateOf(0) }
     val currentSet = workoutExercise.sets.lastOrNull()
+    val infiniteTransition = rememberInfiniteTransition(label = "PR_Breath")
+    val prColor by infiniteTransition.animateColor(
+        initialValue = MaterialTheme.colorScheme.secondary,
+        targetValue = MaterialTheme.colorScheme.tertiary,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "Color"
+    )
+    val prScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.1f, // Make the numbers pop!
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "Scale"
+    )
 
     // 🛡️ CRASH FIX: Force a default type if it is null in the database
     val safeType = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
@@ -62,8 +92,7 @@ fun EditExerciseItem(
                 workoutExercise.exercise.name.contains("Step", ignoreCase = true)
     }
     val isTreadmill = remember(workoutExercise.exercise.name) {
-        workoutExercise.exercise.name.contains("Treadmill", ignoreCase = true) ||
-                workoutExercise.exercise.name.contains("Run", ignoreCase = true)
+        workoutExercise.exercise.name.contains("Treadmill", ignoreCase = true)
     }
 
     // Smart "Is Moving" Check
@@ -97,12 +126,16 @@ fun EditExerciseItem(
                 ExerciseType.STRENGTH -> (safeWeight * set.reps * multiplier).toInt()
                 ExerciseType.ISOMETRIC -> (safeWeight * safeTime * multiplier).toInt()
                 ExerciseType.LoadedCarry -> (safeWeight * safeDist * multiplier).toInt()
+                ExerciseType.TWENTY_ONES -> {
+                    val rawVol = (safeWeight * set.reps * multiplier)
+                    ((rawVol * 2)/3).toInt()
+                }
                 else -> 0
             }
         }
     }
 
-    BackHandler(enabled = isExpanded && isMoving) {
+    BackHandler(enabled = isExpanded && isMoving && safeType == ExerciseType.CARDIO) {
         showExitWarning = true
     }
 
@@ -119,7 +152,7 @@ fun EditExerciseItem(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable {
-                        if (isExpanded && isMoving) {
+                        if (isExpanded && isMoving && safeType == ExerciseType.CARDIO) {
                             showExitWarning = true
                         } else {
                             onHeaderClick()
@@ -135,28 +168,51 @@ fun EditExerciseItem(
                     }
 
                     if (personalRecord != null) {
-                        val prText = remember(personalRecord, safeType) {
-                            if (personalRecord.contains("mi") || personalRecord.contains("stairs") || personalRecord.contains("yds")) {
-                                personalRecord
-                            } else if (safeType == ExerciseType.CARDIO && personalRecord.contains("lbs")) {
-                                val rawNum = personalRecord.split(" ").firstOrNull() ?: personalRecord
-                                "Max Lvl $rawNum"
-                            } else {
-                                if (safeType == ExerciseType.ISOMETRIC) {
-                                    val rawNum = personalRecord.split(" ").firstOrNull() ?: personalRecord
-                                    "$rawNum lbs"
+                        if(isNewPr) {
+                            Text(
+                                text = "NEW PR: $personalRecord",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = prColor, // Animated Color
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.graphicsLayer {
+                                    scaleX = prScale
+                                    scaleY = prScale
+                                    transformOrigin = TransformOrigin(0f, 0.5f) // Scale from left
+                                }
+                            )
+                        } else {
+                            val prText = remember(personalRecord, safeType) {
+                                if (personalRecord.contains("mi") || personalRecord.contains("stairs") || personalRecord.contains(
+                                        "yds"
+                                    )
+                                ) {
+                                    personalRecord
+                                } else if (safeType == ExerciseType.CARDIO && personalRecord.contains(
+                                        "lbs"
+                                    )
+                                ) {
+                                    val rawNum =
+                                        personalRecord.split(" ").firstOrNull() ?: personalRecord
+                                    "Max Lvl $rawNum"
                                 } else {
-                                    if (personalRecord.contains("lbs")) personalRecord else "$personalRecord lbs"
+                                    if (safeType == ExerciseType.ISOMETRIC) {
+                                        val rawNum =
+                                            personalRecord.split(" ").firstOrNull()
+                                                ?: personalRecord
+                                        "$rawNum lbs"
+                                    } else {
+                                        if (personalRecord.contains("lbs")) personalRecord else "$personalRecord lbs"
+                                    }
                                 }
                             }
-                        }
 
-                        Text(
-                            text = "PR: $prText",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.secondary,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                            Text(
+                                text = "PR: $prText",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.secondary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
                 Column {
@@ -235,9 +291,9 @@ fun EditExerciseItem(
                                         Text("Time", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                     }
                                     ExerciseType.LoadedCarry -> {
-                                        Text("Dist", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
-                                        Spacer(Modifier.width(8.dp))
                                         Text("Lbs", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Dist", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                     }
                                     else -> {
                                         Text("Lbs", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
@@ -450,12 +506,12 @@ fun SetInputRow(
             }
         } else if (type == ExerciseType.LoadedCarry) {
             if (isEditable) {
-                OutlinedTextField(value = distanceText, onValueChange = { if (validateDecimal(it)) { distanceText = it; onUpdate(set.copy(distance = it.toDoubleOrNull() ?: 0.0)) } }, modifier = Modifier.weight(1f), placeholder = { Text("Yds") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next))
-                Spacer(Modifier.width(8.dp))
                 OutlinedTextField(value = weightText, onValueChange = { if (validateDecimal(it)) { weightText = it; onUpdate(set.copy(weight = it.toDoubleOrNull() ?: 0.0)) } }, modifier = Modifier.weight(1f), placeholder = { Text("Lbs") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done))
+                Spacer(Modifier.width(8.dp))
+                OutlinedTextField(value = distanceText, onValueChange = { if (validateDecimal(it)) { distanceText = it; onUpdate(set.copy(distance = it.toDoubleOrNull() ?: 0.0)) } }, modifier = Modifier.weight(1f), placeholder = { Text("Yds") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next))
             } else {
-                Text("${set.distance} yds", modifier = Modifier.weight(1f), style = readOnlyTextStyle)
                 Text("${set.weight} lbs", modifier = Modifier.weight(1f), style = readOnlyTextStyle)
+                Text("${set.distance} yds", modifier = Modifier.weight(1f), style = readOnlyTextStyle)
             }
         } else {
             // STRENGTH
