@@ -421,11 +421,11 @@ fun LogWorkoutScreen(
                             val workoutExercise = addedExercises[index]
                             val thisPr = prMapState.value[workoutExercise.exercise.name]
                             val thisHistory = historyMapState.value[workoutExercise.exercise.name] ?: emptyList()
+                            val type = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
 
                             // get historical pr
                             val historyPrString = prMapState.value[workoutExercise.exercise.name]
                             val currentBestValue = remember(workoutExercise.sets, workoutExercise.exercise.type){
-                                val type = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
                                 when (type) {
                                     ExerciseType.CARDIO -> workoutExercise.sets.sumOf { it.distance ?: 0.0 }
                                     ExerciseType.LoadedCarry -> workoutExercise.sets.maxOfOrNull { it.weight } ?: 0.0
@@ -435,15 +435,13 @@ fun LogWorkoutScreen(
                             val historyValue = remember(historyPrString){
                                 historyPrString?.split(" ")?.firstOrNull()?.toDoubleOrNull() ?: 0.0
                             }
-                            val bestSetToday = remember(workoutExercise.sets){
-                                workoutExercise.sets.maxByOrNull { it.weight }
-                            }
+                            val bestSetToday = workoutExercise.sets.maxByOrNull { it.weight }
                             val currentBestWeight = bestSetToday?.weight ?: 0.0
                             val currentBestReps = bestSetToday?.reps ?: 0
                             val currentBestDistance = bestSetToday?.distance ?: 0.0
                             val currentBestTime = bestSetToday?.time ?: 0
 
-                            val isValidSet = when (workoutExercise.exercise.type) {
+                            val isValidSet = when (type) {
                                 ExerciseType.CARDIO -> currentBestValue > 0 // Distance > 0
                                 ExerciseType.LoadedCarry -> currentBestDistance > 0
                                 ExerciseType.ISOMETRIC -> currentBestTime > 0
@@ -454,7 +452,7 @@ fun LogWorkoutScreen(
                             var isNewRecord = false
                             if (historyValue > 0 && currentBestWeight > historyValue && isValidSet){
                                 isNewRecord = true
-                                displayPr = when (workoutExercise.exercise.type){
+                                displayPr = when (type){
                                     ExerciseType.CARDIO -> {
                                         // For Cardio, we sum everything, so we don't use 'bestSetToday'
                                         val totalDist = workoutExercise.sets.sumOf { it.distance ?: 0.0 }
