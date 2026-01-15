@@ -1,12 +1,15 @@
 package com.example.swolescroll.features.detail
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -32,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -201,27 +205,8 @@ fun WorkoutDetailScreen(
                     )
                 }
 
-                // 4. RESTORED NOTES DISPLAY
                 if (!workout.notes.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.padding(6.dp)) // Slight padding tweak
-                    Card(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp).fillMaxWidth()) {
-                            Text(
-                                text = "Workout Notes",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer
-                            )
-                            Text(
-                                text = workout.notes,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontStyle = FontStyle.Italic
-                            )
-                        }
-                    }
+                    CollapsibleNoteCard(note = workout.notes)
                 }
 
                 // 5. RESTORED LIST
@@ -232,6 +217,75 @@ fun WorkoutDetailScreen(
                     items(workout.exercises) { workoutExercise ->
                         DetailExerciseItem(workoutExercise = workoutExercise)
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CollapsibleNoteCard(
+    note: String,
+    modifier: Modifier = Modifier
+) {
+    // 1. State to track if we are expanded
+    var isExpanded by remember { mutableStateOf(false) }
+
+    // 2. Simple logic: If text is > 150 chars, we treat it as "Long"
+    val isLongText = remember(note) { note.length > 150 }
+
+    Card(
+        // Use your theme's container color (the beige/tan color)
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+            // OR use your specific hex if you have it, e.g., Color(0xFFEFE5D5)
+        ),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            // 3. THIS IS THE MAGIC MODIFIER! ✨
+            // It makes the card resize smoothly when the text inside changes size.
+            .animateContentSize()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Title
+            Text(
+                text = "Workout Notes",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Body Text
+            Text(
+                text = note,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                // 4. Logic: If expanded, show ALL lines. If not, limit to 3.
+                maxLines = if (isExpanded) Int.MAX_VALUE else 3,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            // 5. The "Show More" Button (Only shows if text is long)
+            if (isLongText) {
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Full-width clickable box for easy tapping
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { isExpanded = !isExpanded }
+                        .padding(vertical = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (isExpanded) "Show Less" else "Show More",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
         }
