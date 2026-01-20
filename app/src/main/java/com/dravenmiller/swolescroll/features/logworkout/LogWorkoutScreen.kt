@@ -1,6 +1,8 @@
 package com.dravenmiller.swolescroll.features.logworkout
 
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.clickable
@@ -19,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
@@ -69,6 +72,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+@RequiresApi(Build.VERSION_CODES.Q)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LogWorkoutScreen(
@@ -136,7 +140,14 @@ fun LogWorkoutScreen(
             knownExercises = knownExercises,
             onDismiss = { viewModel.showDialog.value = false },
             onExerciseSelected = { exercise ->
-                val newEntry = WorkoutExercise(exercise = exercise, sets = emptyList())
+                val initialSet = Set(
+                    id = java.util.UUID.randomUUID().toString(),
+                    weight = 0.0,
+                    reps = 0,
+                    distance = 0.0,
+                    time = 0
+                )
+                val newEntry = WorkoutExercise(exercise = exercise, sets = listOf(initialSet))
                 viewModel.addedExercises.add(newEntry)
                 viewModel.showDialog.value = false
             },
@@ -423,7 +434,7 @@ fun LogWorkoutScreen(
                             val thisHistory = historyMapState.value[workoutExercise.exercise.name] ?: emptyList()
                             val type = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
 
-                            // get historical pr
+                            // 1. GET HISTORY (Parse Weight AND Reps) 🕵️‍♂️
                             val historyPrString = prMapState.value[workoutExercise.exercise.name]
                             val currentBestValue = remember(workoutExercise.sets, workoutExercise.exercise.type){
                                 when (type) {
@@ -448,10 +459,23 @@ fun LogWorkoutScreen(
                                 else -> currentBestReps > 0 // Strength/21s needs reps
                             }
 
+                            val historyWeight = remember(historyPrString) {
+                                historyPrString?.split("x")?.firstOrNull()
+                                    ?.replace("lbs", "")?.trim()?.toDoubleOrNull() ?: 0.0
+                            }
+
+                            val historyReps = remember(historyPrString) {
+                                // Looks for the number after "x" (e.g., "150 lbs x 5")
+                                historyPrString?.split("x")?.getOrNull(1)?.trim()?.toIntOrNull() ?: 0
+                            }
+                            val isWeightPR = currentBestWeight > historyWeight
+                            val isRepPR = (currentBestWeight == historyWeight) && (currentBestWeight > 0) && (currentBestReps > historyReps)
+
+                            val isNewRecord = isWeightPR || isRepPR
+
                             var displayPr = historyPrString
-                            var isNewRecord = false
-                            if (historyValue > 0 && currentBestWeight > historyValue && isValidSet){
-                                isNewRecord = true
+
+                            if (isNewRecord) {
                                 displayPr = when (type){
                                     ExerciseType.CARDIO -> {
                                         // For Cardio, we sum everything, so we don't use 'bestSetToday'
@@ -586,17 +610,27 @@ fun LogWorkoutScreen(
 
             }
 
-            // REPLACE THE OLD "Done Editing" BUTTON WITH NAVIGATION ROW 👇
+            val isLastItem = expandedIndex == addedExercises.lastIndex
+            // 👇 SMART NAVIGATION ROW
             AnimatedVisibility(visible = isFocusMode) {
+                // 1. Calculate the names safely
+                val prevExerciseName = if (expandedIndex > 0) {
+                    addedExercises[expandedIndex - 1].exercise.name
+                } else null
+
+                val nextExerciseName = if (expandedIndex < addedExercises.lastIndex) {
+                    addedExercises[expandedIndex + 1].exercise.name
+                } else "Add New"
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
+                        .padding(top = 12.dp, start = 4.dp, end = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // ⬆️ PREVIOUS EXERCISE (Up in the list)
-                    androidx.compose.material3.FilledTonalIconButton(
+                    // ⬅️ PREV BUTTON (Outlined)
+                    androidx.compose.material3.OutlinedButton(
                         onClick = {
                             if (expandedIndex > 0) {
                                 val target = expandedIndex - 1
@@ -604,44 +638,64 @@ fun LogWorkoutScreen(
                                 expandedIndex = target
                             }
                         },
-                        enabled = expandedIndex > 0, // Disable if at top
-                        modifier = Modifier.size(56.dp)
+                        enabled = expandedIndex > 0,
+                        modifier = Modifier.weight(1f), // Share width
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowUp,
-                            contentDescription = "Previous Exercise",
-                            modifier = Modifier.size(32.dp)
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.KeyboardArrowUp, contentDescription = null, modifier = Modifier.size(20.dp))
+                            if (prevExerciseName != null) {
+                                Text(
+                                    text = prevExerciseName,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     }
 
-                    // ❌ CLOSE FOCUS
-                    androidx.compose.material3.OutlinedButton(
+                    // ❌ DONE (Small Middle Button)
+                    androidx.compose.material3.TextButton(
                         onClick = { expandedIndex = -1 },
-                        modifier = Modifier.height(56.dp)
+                        modifier = Modifier.width(60.dp) // Fixed width to save room for names
                     ) {
-                        Text("Done")
+                        Text("Done", style = MaterialTheme.typography.labelMedium)
                     }
 
-                    // ⬇️ NEXT EXERCISE (Down in the list)
-                    androidx.compose.material3.FilledTonalIconButton(
+                    // ➡️ NEXT BUTTON (Filled & Prominent)
+                    androidx.compose.material3.Button(
                         onClick = {
-                            if (expandedIndex < addedExercises.lastIndex) {
+                            if (isLastItem) {
+                                viewModel.showDialog.value = true
+                            } else {
                                 val target = expandedIndex + 1
                                 viewModel.prepareForSuperset(target)
                                 expandedIndex = target
                             }
                         },
-                        enabled = expandedIndex < addedExercises.lastIndex, // Disable if at bottom
-                        modifier = Modifier.size(56.dp)
+                        modifier = Modifier.weight(1f),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = "Next Exercise",
-                            modifier = Modifier.size(32.dp)
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                if (isLastItem) Icons.Default.Add else Icons.Default.KeyboardArrowDown,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = nextExerciseName,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
+
 
             if (viewModel.showHistoryDialog.value) {
                 val history by viewModel.exerciseHistory.collectAsState()

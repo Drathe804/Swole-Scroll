@@ -30,4 +30,7 @@ interface WorkoutDao {
     // DELETE: Remove a workout
     @Delete
     suspend fun deleteWorkout(workout: Workout)
+
+    @Query("SELECT * FROM workout_table")
+    suspend fun getAllWorkoutsList(): List<Workout>
 }

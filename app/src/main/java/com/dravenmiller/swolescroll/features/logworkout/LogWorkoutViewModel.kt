@@ -1,8 +1,10 @@
 package com.dravenmiller.swolescroll.features.logworkout
 
 import android.app.Application // Import this!
+import android.os.Build
 import android.util.Log
 import android.util.Log.e
+import androidx.annotation.RequiresApi
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -11,6 +13,7 @@ import androidx.lifecycle.AndroidViewModel // Import this!
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import androidx.room.util.copy
 import com.dravenmiller.swolescroll.data.AppDatabase
 import com.dravenmiller.swolescroll.data.BackupManager // Import your new manager
 import com.dravenmiller.swolescroll.model.Draft
@@ -238,7 +241,13 @@ class LogWorkoutViewModel(
             val cleanName = name.trim()
             val existingExercise = db.exerciseDao().getExerciseByName(cleanName)
             val exerciseToUse = if (existingExercise != null) {
-                existingExercise
+                if (existingExercise.type != null){
+                    val patchedExercise = existingExercise.copy(type = type)
+                    db.exerciseDao().updateExercise(patchedExercise)
+                    patchedExercise
+                } else {
+                    existingExercise
+                }
             } else {
                 val newExercise = Exercise(
                     name = cleanName,
@@ -249,9 +258,16 @@ class LogWorkoutViewModel(
                 db.exerciseDao().insertExercise(newExercise)
                 newExercise
             }
+            val initialSet = Set(
+                id = java.util.UUID.randomUUID().toString(),
+                weight = 0.0,
+                reps = 0,
+                distance = 0.0,
+                time = 0
+            )
             val newWorkoutExercise = WorkoutExercise(
                 exercise = exerciseToUse,
-                sets = emptyList()
+                sets = listOf(initialSet)
             )
             addedExercises.add(newWorkoutExercise)
         }
@@ -259,7 +275,21 @@ class LogWorkoutViewModel(
 
     fun updateExercise(updatedExercise: Exercise) {
         viewModelScope.launch {
-            db.exerciseDao().updateExercise(updatedExercise)
+            // 1. Find the ORIGINAL version of this exercise to see what the old name was
+            val existingExercise = exerciseList.value.find { it.id == updatedExercise.id }
+
+            if (existingExercise != null && existingExercise.name != updatedExercise.name) {
+                // 🚨 NAME CHANGED! 🚨
+                // Trigger the History Migrator to fix past logs
+                renameExercise(oldName = existingExercise.name, newName = updatedExercise.name)
+
+                // Also ensure muscle/type updates happen
+                db.exerciseDao().updateExercise(updatedExercise)
+            } else {
+                // 💤 NAME IS THE SAME
+                // Just update the muscle group or type in the master list
+                db.exerciseDao().updateExercise(updatedExercise)
+            }
         }
     }
 
@@ -299,11 +329,16 @@ class LogWorkoutViewModel(
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.Q)
     fun saveWorkout(onSaved: () -> Unit) {
         if (addedExercises.isEmpty()) return
 
         // Simple Validation
-        val validExercises = addedExercises.filter { it.sets.isNotEmpty() }
+        val validExercises = addedExercises.filter { exercise ->
+            exercise.sets.any { set ->
+                (set.weight > 0.0) || (set.reps > 0) || ((set.distance ?: 0.0) > 0)
+            }
+        }
         if (validExercises.isEmpty()) {
             android.widget.Toast.makeText(
                 application, "Add some sets first!", android.widget.Toast.LENGTH_SHORT
@@ -516,6 +551,45 @@ class LogWorkoutViewModel(
             addedExercises[targetIndex] = targetExercise.copy(sets = updatedSets)
         }
     }
+
+    fun renameExercise(oldName: String, newName: String) {
+        viewModelScope.launch {
+            // JOB 1: Fix the Master List
+            // USE db.exerciseDao(), not dao
+            db.exerciseDao().renameExercise(oldName, newName)
+
+            // JOB 2: Fix the History
+            // USE db.workoutDao(), not workoutDao
+            val allWorkouts = db.workoutDao().getAllWorkoutsList()
+
+            allWorkouts.forEach { workout ->
+                val hasOldName = workout.exercises.any { it.exercise.name == oldName }
+
+                if (hasOldName) {
+                    val updatedExercises = workout.exercises.map { workoutExercise ->
+                        if (workoutExercise.exercise.name == oldName) {
+                            val fixedExercise = workoutExercise.exercise.copy(
+                                name = newName,
+                                type = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
+                            )
+                            workoutExercise.copy(exercise = fixedExercise)
+                        } else {
+                            workoutExercise
+                        }
+                    }
+
+                    // Save back to DB
+                    db.workoutDao().updateWorkout(workout.copy(exercises = updatedExercises))
+                }
+            }
+
+            // JOB 3: Refresh the UI
+            // REMOVED: _exerciseList.value = ...
+            // REASON: Your 'exerciseList' variable at the top is a Flow.
+            // It watches the database and will update itself automatically!
+        }
+    }
+
 
 }
 

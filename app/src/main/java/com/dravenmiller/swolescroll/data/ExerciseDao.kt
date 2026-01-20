@@ -29,4 +29,7 @@ interface ExerciseDao {
 
     @Delete
     suspend fun deleteExercise(exercise: Exercise)
+
+    @Query("UPDATE exercise_table SET name = :newName WHERE name = :oldName")
+    suspend fun renameExercise(oldName: String, newName: String)
 }
