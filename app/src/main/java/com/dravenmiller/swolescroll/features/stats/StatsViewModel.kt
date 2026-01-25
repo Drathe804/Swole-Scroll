@@ -5,9 +5,18 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.dravenmiller.swolescroll.data.WorkoutDao
 import com.dravenmiller.swolescroll.model.ExerciseType
+import com.dravenmiller.swolescroll.util.OneRepMaxCalculator // 👈 MAKE SURE THIS IS IMPORTED
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+
+// 1. Create a simple data class for our Graph Points
+data class GraphPoint(
+    val date: Long,
+    val estimates: OneRepMaxCalculator.Estimates, // Holds ALL formulas
+    val formulaLabel: String // Which one was used for "Smart" (for tooltips)
+)
 
 data class PersonalRecord(
     val exerciseName: String,
@@ -21,8 +30,59 @@ class StatsViewModel(private val dao: WorkoutDao) : ViewModel() {
     private val _prList = MutableStateFlow<List<PersonalRecord>>(emptyList())
     val prList: StateFlow<List<PersonalRecord>> = _prList
 
+    // 👇 2. NEW STATE: Holds the points for the graph line
+    private val _graphData = MutableStateFlow<List<GraphPoint>>(emptyList())
+    val graphData: StateFlow<List<GraphPoint>> = _graphData
+
     init {
         calculateStats()
+    }
+
+    // 👇 3. NEW FUNCTION: Calculates the "Smart 1RM" Trend Line 📈
+    fun generateOneRepMaxHistory(exerciseName: String) {
+        viewModelScope.launch {
+            // A. Get a "Snapshot" of the database (using .first() to grab the list once)
+            val allWorkouts = dao.getAllWorkouts().first()
+
+            // B. Filter: Find every time you did this specific exercise
+            val points = allWorkouts.mapNotNull { workout ->
+                val exerciseEntry = workout.exercises.find {
+                    it.exercise.name.equals(exerciseName, ignoreCase = true)
+                }
+
+                if (exerciseEntry != null) {
+                    // C. Find the "Best Set" of that day (Highest calculated 1RM)
+                    val bestSet = exerciseEntry.sets.maxByOrNull { set ->
+                        OneRepMaxCalculator.getSmart1RM(set.weight, set.reps)
+                    }
+
+                    // D. Calculate the point
+                    if (bestSet != null && bestSet.weight > 0.0) {
+                        val smartMax = OneRepMaxCalculator.getSmart1RM(bestSet.weight, bestSet.reps)
+
+                        // Label the formula for debug/tooltips
+                        val label = when {
+                            bestSet.reps <= 5 -> "Brzycki"
+                            bestSet.reps <= 12 -> "Epley"
+                            else -> "Lombardi"
+                        }
+
+                        GraphPoint(
+                            date = workout.date,
+                            estimates = OneRepMaxCalculator.getAllEstimates(bestSet.weight, bestSet.reps),
+                            formulaLabel = label
+                        )
+                    } else {
+                        null
+                    }
+                } else {
+                    null // You didn't do this exercise on this day
+                }
+            }.sortedBy { it.date } // E. Sort Oldest -> Newest
+
+            // F. Update the Graph
+            _graphData.value = points
+        }
     }
 
     private fun calculateStats() {
@@ -57,6 +117,7 @@ class StatsViewModel(private val dao: WorkoutDao) : ViewModel() {
                                     val totalDist = bestSession.sets.sumOf { it.distance ?: 0.0 }
                                     val totalSeconds = bestSession.sets.sumOf { it.time ?: 0 }
 
+                                    // Find "Dominant Level" (Usually weight/speed setting)
                                     val domGroup = bestSession.sets
                                         .groupBy { it.weight }
                                         .maxByOrNull { entry -> entry.value.sumOf { it.time ?: 0 } }
@@ -64,11 +125,9 @@ class StatsViewModel(private val dao: WorkoutDao) : ViewModel() {
 
                                     if (isStairsName) {
                                         // 🪜 STAIRS LOGIC (Steps & Steps/Min)
-                                        // Fixes "4000 mph" error 🛠️
                                         val minutes = totalSeconds / 60.0
                                         val spm = if (minutes > 0) totalDist / minutes else 0.0
 
-                                        // Display as Integer (no decimals for steps)
                                         val mainStr = "${totalDist.toInt()} steps"
                                         val subStr = "${spm.toInt()} steps/min (@ Lvl ${domLevel.toInt()})"
                                         records.add(PersonalRecord(name, effectiveType, mainStr, subStr))

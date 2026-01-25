@@ -71,6 +71,7 @@ import com.dravenmiller.swolescroll.ui.components.SwoleButton
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.Map.entry
 
 @RequiresApi(Build.VERSION_CODES.Q)
 @OptIn(ExperimentalMaterial3Api::class)
@@ -471,30 +472,134 @@ fun LogWorkoutScreen(
                             val isWeightPR = currentBestWeight > historyWeight
                             val isRepPR = (currentBestWeight == historyWeight) && (currentBestWeight > 0) && (currentBestReps > historyReps)
 
-                            val isNewRecord = isWeightPR || isRepPR
+                            // 2. CALCULATE "IS NEW RECORD" BASED ON TYPE 🧠
+                            val isNewRecord = remember(workoutExercise.sets, historyPrString, type) {
+                                when (type) {
+                                    ExerciseType.CARDIO -> {
+                                        // 🏃 SPEED CHECK
+                                        val totalDist = workoutExercise.sets.sumOf { it.distance ?: 0.0 }
+                                        val totalSeconds = workoutExercise.sets.sumOf { it.time ?: 0 }
 
+                                        if (totalDist > 0 && totalSeconds > 0) {
+                                            val isStairs = workoutExercise.exercise.name.contains("stairs", ignoreCase = true)
+
+                                            // 1. Calculate Current Speed
+                                            val currentSpeed = if (isStairs){
+                                                val minutes = totalSeconds / 60.0
+                                                if (minutes > 0) totalDist / minutes else 0.0
+                                            } else {
+                                                val hours = totalSeconds / 3600.0
+                                                if (hours > 0) totalDist / hours else 0.0 // mph
+                                            }
+
+                                            // 2. Extract History (Handle "Bad Data" Fix) 🛠️
+                                            val rawHistory = historyPrString?.split(" ")?.firstOrNull()?.toDoubleOrNull() ?: 0.0
+
+                                            // If it's Stairs but the history says "mph", it's the old "Stairs per Hour" math.
+                                            // We divide by 60 to convert it to "Stairs per Minute".
+                                            val historySpeed = if (isStairs && historyPrString?.contains("mph") == true) {
+                                                rawHistory / 60.0
+                                            } else {
+                                                rawHistory
+                                            }
+
+                                            currentSpeed > historySpeed
+                                        } else {
+                                            false
+                                        }
+                                    }
+
+                                    ExerciseType.LoadedCarry -> {
+                                        // 🏋️ CARRY CHECK: Heavier OR (Same Weight + Further)
+                                        val bestSet = workoutExercise.sets.maxByOrNull { it.weight }
+                                        val currentW = bestSet?.weight ?: 0.0
+                                        val currentD = bestSet?.distance ?: 0.0
+
+                                        // History string: "100.0 lbs for 50.0 yds"
+                                        val parts = historyPrString?.split(" ")
+                                        val historyW = parts?.firstOrNull()?.toDoubleOrNull() ?: 0.0 // "100.0"
+                                        // "for" is index 2, dist is index 3? Let's be safer: look for "yds" predecessor
+                                        val historyD = historyPrString?.substringAfter("for ")?.split(" ")?.firstOrNull()?.toDoubleOrNull() ?: 0.0
+
+                                        if (currentD > 0){
+                                        val isHeavier = currentW > historyW
+                                        val isFurther = (currentW == historyW) && (currentW > 0) && (currentD > historyD)
+                                        isHeavier || isFurther
+                                        } else {
+                                            false
+                                        }
+                                    }
+                                    ExerciseType.ISOMETRIC -> {
+                                        // Heavier Hold
+                                        val maxWeight = workoutExercise.sets.maxOfOrNull { it.weight } ?: 0.0
+                                        val maxTime = workoutExercise.sets.maxOfOrNull { it.time } ?: 0
+                                        val historyWeight = historyPrString?.split(" ")?.firstOrNull()?.toDoubleOrNull() ?: 0.0
+                                        maxWeight > historyWeight && maxWeight > 0 && maxTime > 0
+                                    }
+                                    else -> {
+                                        // STRENGTH (Weight x Reps)
+                                        val bestSet = workoutExercise.sets.maxByOrNull { it.weight }
+                                        val w = bestSet?.weight ?: 0.0
+                                        val r = bestSet?.reps ?: 0
+
+                                        val histWeight = historyPrString?.split("x")?.firstOrNull()?.replace("lbs", "")?.trim()?.toDoubleOrNull() ?: 0.0
+                                        val histReps = historyPrString?.split("x")?.getOrNull(1)?.trim()?.toIntOrNull() ?: 0
+
+                                        if(r > 0) {
+                                            val isWeightPR = w > histWeight
+                                            val isRepPR =
+                                                (w == histWeight) && (w > 0) && (r > histReps)
+
+                                            isWeightPR || isRepPR
+                                        } else {
+                                            false
+                                        }
+                                    }
+                                }
+                            }
+
+                            // FORMAT DISPLAY TEXT
                             var displayPr = historyPrString
 
-                            if (isNewRecord) {
+                            // 🆕 FIX LEGACY DATA DISPLAY 🧹
+                            // If we have an old "mph" record for Stairs, fix the text immediately
+                            if (type == ExerciseType.CARDIO &&
+                                workoutExercise.exercise.name.contains("stairs", ignoreCase = true) &&
+                                historyPrString?.contains("mph") == true) {
+
+                                val raw = historyPrString.split(" ").firstOrNull()?.toDoubleOrNull() ?: 0.0
+                                val fixed = raw / 60.0
+                                displayPr = "${String.format("%.2f", fixed)} stairs/min"
+                            }
+
+                                if (isNewRecord) {
                                 displayPr = when (type){
                                     ExerciseType.CARDIO -> {
-                                        // For Cardio, we sum everything, so we don't use 'bestSetToday'
                                         val totalDist = workoutExercise.sets.sumOf { it.distance ?: 0.0 }
-                                        val cleanDist = String.format("%.2f", totalDist).removeSuffix("0").removeSuffix("0").removeSuffix(".")
-                                        "$cleanDist ${if(workoutExercise.exercise.name.contains("Stair")) "stairs" else "mi"}"
+                                        val totalSeconds = workoutExercise.sets.sumOf { it.time ?: 0 }
+                                        val isStairs = workoutExercise.exercise.name.contains("stairs", ignoreCase = true)
+
+                                        if (isStairs) {
+                                            // 🪜 STAIRS TEXT
+                                            val minutes = totalSeconds / 60.0
+                                            val spm = if (minutes > 0) totalDist / minutes else 0.0
+                                            "${String.format("%.2f", spm)} stairs/min"
+                                        } else {
+                                            // 🏃 RUNNING TEXT
+                                            val hours = totalSeconds / 3600.0
+                                            val speed = if (hours > 0) totalDist / hours else 0.0
+                                            "${String.format("%.2f", speed)} mph"
+                                        }
                                     }
                                     ExerciseType.LoadedCarry -> {
-                                        val dist = bestSetToday?.distance ?: 0.0
-                                        // Optional: Clean up "50.0" to "50"
-                                        val cleanDist = dist.toString().removeSuffix(".0")
-                                        "$currentBestWeight lbs for $cleanDist yds"
+                                        val bestSet = workoutExercise.sets.maxByOrNull { it.weight }
+                                        "${bestSet?.weight} lbs for ${bestSet?.distance} yds"
                                     }
-                                    ExerciseType.ISOMETRIC -> "$currentBestWeight lbs"
-
-                                    // STRENGTH & 21s: Show "Weight x Reps"
+                                    // ... others same as before ...
                                     else -> "$currentBestWeight lbs x $currentBestReps"
                                 }
                             }
+
 
                             Column(modifier = Modifier.animateContentSize()) {
                                 EditExerciseItem(

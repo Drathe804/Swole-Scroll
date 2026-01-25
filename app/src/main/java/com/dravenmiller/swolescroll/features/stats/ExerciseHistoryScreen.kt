@@ -16,17 +16,21 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,8 +38,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.dravenmiller.swolescroll.ui.components.GraphMode
+import com.dravenmiller.swolescroll.ui.components.OneRepMaxGraph // 👈 Don't forget this import!
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -48,7 +55,18 @@ fun ExerciseHistoryScreen(
     onBackClick: () -> Unit
 ) {
     val history by viewModel.history.collectAsState()
+
+    // 1. OBSERVE GRAPH DATA 📉
+    // (Make sure your ExerciseHistoryViewModel has this variable!)
+    val graphPoints by viewModel.graphData.collectAsState()
+
     var selectedTab by remember { mutableStateOf(0) }
+    var graphMode by remember { mutableStateOf(GraphMode.SMART) } // State for the toggle
+
+    // 2. TRIGGER CALCULATION 🧮
+    LaunchedEffect(exerciseName) {
+        viewModel.generateOneRepMaxHistory(exerciseName)
+    }
 
     Scaffold(
         topBar = {
@@ -79,6 +97,62 @@ fun ExerciseHistoryScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (selectedTab == 0) {
+                    // --- TAB: HISTORY ---
+
+                    // 3. THE GRAPH CARD (Only show if we have data) 📉
+                    if (graphPoints.isNotEmpty()) {
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surface
+                                ),
+                                elevation = CardDefaults.cardElevation(2.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text(
+                                        text = "Estimated 1RM Trend",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+
+                                    // THE TOGGLE CHIPS
+                                    ScrollableTabRow(
+                                        selectedTabIndex = graphMode.ordinal,
+                                        edgePadding = 0.dp,
+                                        containerColor = Color.Transparent,
+                                        indicator = { /* Optional: Hide indicator if using chips */ },
+                                        divider = {}
+                                    ) {
+                                        GraphMode.values().forEach { mode ->
+                                            val isSelected = graphMode == mode
+                                            FilterChip(
+                                                selected = isSelected,
+                                                onClick = { graphMode = mode },
+                                                label = { Text(mode.name) },
+                                                modifier = Modifier.padding(horizontal = 4.dp),
+                                                colors = FilterChipDefaults.filterChipColors(
+                                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer
+                                                )
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    // THE GRAPH
+                                    OneRepMaxGraph(
+                                        data = graphPoints,
+                                        selectedMode = graphMode,
+                                        modifier = Modifier.fillMaxWidth().height(200.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 4. THE LOG LIST (Below the graph)
                     if (history.isEmpty()) {
                         item { Text("No history found.") }
                     } else {
@@ -86,7 +160,9 @@ fun ExerciseHistoryScreen(
                             HistoryCard(entry, exerciseName)
                         }
                     }
+
                 } else {
+                    // --- TAB: NOTES ---
                     val notesOnly = history.filter { it.note.isNotBlank() }
                     if (notesOnly.isEmpty()) {
                         item {
@@ -106,6 +182,7 @@ fun ExerciseHistoryScreen(
     }
 }
 
+// ... (HistoryCard and NoteCard functions remain exactly the same as you had them)
 @Composable
 fun HistoryCard(
     entry: HistoryEntry,
