@@ -21,6 +21,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -182,9 +184,10 @@ fun EditExerciseItem(
                             )
                         } else {
                             val prText = remember(personalRecord, safeType) {
-                                if (personalRecord.contains("mi") || personalRecord.contains("stairs") || personalRecord.contains(
-                                        "yds"
-                                    )
+                                if (personalRecord.contains("mi") ||
+                                    personalRecord.contains("stairs") ||
+                                    personalRecord.contains("yds") ||
+                                    personalRecord.contains("mph")
                                 ) {
                                     personalRecord
                                 } else if (safeType == ExerciseType.CARDIO && personalRecord.contains(
@@ -264,19 +267,22 @@ fun EditExerciseItem(
 
 
                             // Headers
-                            Row(modifier = Modifier.fillMaxWidth()) {
+                            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+                                // 1. "Set" Column (Always there)
                                 Text("Set", modifier = Modifier.width(28.dp), style = MaterialTheme.typography.labelSmall)
 
+                                // 2. Dynamic Columns
                                 when (safeType) {
+                                    // 🏃 CARDIO (Complex: Treadmill vs Regular)
                                     ExerciseType.CARDIO -> {
                                         if (isTreadmill) {
                                             Text("Dist", modifier = Modifier.weight(0.8f), style = MaterialTheme.typography.labelSmall)
                                             Spacer(Modifier.width(4.dp))
                                             Text("Time", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                             Spacer(Modifier.width(4.dp))
-                                            Text("Lvl", modifier = Modifier.weight(0.6f), style = MaterialTheme.typography.labelSmall)
+                                            Text("Lvl", modifier = Modifier.weight(0.6f), style = MaterialTheme.typography.labelSmall) // Speed
                                             Spacer(Modifier.width(4.dp))
-                                            Text("Inc", modifier = Modifier.weight(0.6f), style = MaterialTheme.typography.labelSmall)
+                                            Text("Inc", modifier = Modifier.weight(0.6f), style = MaterialTheme.typography.labelSmall) // Incline
                                         } else {
                                             Text(if (isStairs) "Stairs" else "Dist", modifier = Modifier.weight(0.8f), style = MaterialTheme.typography.labelSmall)
                                             Spacer(Modifier.width(4.dp))
@@ -285,24 +291,32 @@ fun EditExerciseItem(
                                             Text("Lvl", modifier = Modifier.weight(0.8f), style = MaterialTheme.typography.labelSmall)
                                         }
                                     }
+                                    // 🧘 ISOMETRIC (Planks: Weight + Time)
                                     ExerciseType.ISOMETRIC -> {
                                         Text("Lbs", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                         Spacer(Modifier.width(8.dp))
                                         Text("Time", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                     }
+
+                                    // 🚶 LOADED CARRY (Farmers Walk: Weight + Distance)
                                     ExerciseType.LoadedCarry -> {
                                         Text("Lbs", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                         Spacer(Modifier.width(8.dp))
                                         Text("Dist", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                     }
+
+                                    // 💪 STRENGTH (Standard: Weight + Reps)
                                     else -> {
                                         Text("Lbs", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                         Spacer(Modifier.width(8.dp))
                                         Text("Reps", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                     }
                                 }
+
+                                // 3. Space for the "Close" (X) button
                                 Spacer(modifier = Modifier.width(30.dp))
                             }
+
 
                             workoutExercise.sets.forEachIndexed { index, set ->
                                 SetInputRow(
@@ -408,7 +422,7 @@ fun SetInputRow(
                         CompactTextField(
                             value = distanceText,
                             onValueChange = { if (validateDecimal(it)) { distanceText = it; onUpdate(set.copy(distance = it.toDoubleOrNull() ?: 0.0)) } },
-                            placeholder = if (isStairs) "Flr" else "Mi",
+                            placeholder = if (isStairs) "Stairs" else "Mi",
                             modifier = Modifier.weight(0.8f),
                             keyboardType = KeyboardType.Decimal,
                             imeAction = ImeAction.Next
@@ -479,7 +493,7 @@ fun SetInputRow(
                 }
             } else {
                 // READ ONLY VIEW
-                Text("${set.distance} ${if (isStairs) "flr" else "mi"}", modifier = Modifier.weight(0.8f), style = readOnlyTextStyle)
+                Text("${set.distance} ${if (isStairs) "stairs" else "mi"}", modifier = Modifier.weight(0.8f), style = readOnlyTextStyle)
                 Text(set.timeFormatted(), modifier = Modifier.weight(1f), style = readOnlyTextStyle, textAlign = TextAlign.Center)
 
                 if (isTreadmill) {
@@ -490,8 +504,7 @@ fun SetInputRow(
                     Text("Lvl ${set.weight}".removeSuffix(".0"), modifier = Modifier.weight(0.8f), style = readOnlyTextStyle, textAlign = TextAlign.End)
                 }
             }
-        }
-        else if (type == ExerciseType.ISOMETRIC) {
+        } else if (type == ExerciseType.ISOMETRIC) {
             if (isEditable) {
                 OutlinedTextField(value = weightText, onValueChange = { if (validateDecimal(it)) { weightText = it; onUpdate(set.copy(weight = it.toDoubleOrNull() ?: 0.0)) } }, modifier = Modifier.weight(1f), placeholder = { Text("Lbs") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next))
                 Spacer(Modifier.width(8.dp))

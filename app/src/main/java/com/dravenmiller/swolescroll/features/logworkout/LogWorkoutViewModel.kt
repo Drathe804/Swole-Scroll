@@ -64,81 +64,73 @@ class LogWorkoutViewModel(
         db.workoutDao().getAllWorkouts()
             .map { workouts ->
                 val prMap = mutableMapOf<String, String>()
-                val maxValues = mutableMapOf<String, Double>()
+
+                // Track "Bests" differently for each type
+                val maxCardioSpeed = mutableMapOf<String, Double>() // Speed (Dist / Time)
+                val maxCarryWeight = mutableMapOf<String, Double>() // Weight
+                val maxCarryDist = mutableMapOf<String, Double>()   // Distance (tie-breaker)
+                val maxStrengthWeight = mutableMapOf<String, Double>() // Weight
 
                 workouts.forEach { workout ->
                     workout.exercises.forEach { workoutExercise ->
                         val name = workoutExercise.exercise.name
                         val type = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
 
-                        // A. CALCULATE THE VALUE TO COMPARE
-                        val (candidateValue, displayString) = when (type) {
+                        when (type) {
                             ExerciseType.CARDIO -> {
-                                // 1. TOTALS: Sum up the entire session
+                                // 🏃 CARDIO: Calculate SPEED (Distance / Time)
+                                // We sum the session to get average speed
                                 val totalDist = workoutExercise.sets.sumOf { it.distance ?: 0.0 }
                                 val totalSeconds = workoutExercise.sets.sumOf { it.time ?: 0 }
 
-                                // 2. MAJORITY LEVEL: Find the level used for the most TIME ⏳
-                                // Group sets by Level (reps) -> Sum their duration -> Pick the winner
-                                val dominantLevelEntry = workoutExercise.sets
-                                    .groupBy { it.reps } // Group by Level
-                                    .maxByOrNull { entry -> entry.value.sumOf { it.time ?: 0 } } // Find max duration
+                                if (totalDist > 0 && totalSeconds > 0) {
+                                    val speed = totalDist / (totalSeconds / 3600.0) // Miles per Hour
 
-                                val majorityLevelRaw = dominantLevelEntry?.key ?: 0
-
-                                // 3. FORMATTING
-                                val isStairs = name.contains("Stair", true) || name.contains("Step", true)
-                                val unit = if (isStairs) "stairs" else "mi"
-
-                                val distStr = String.format("%.2f", totalDist)
-                                    .removeSuffix("0")
-                                    .removeSuffix("0")
-                                    .removeSuffix(".")
-
-                                // Helper to format time (e.g. 3600s -> "60:00")
-                                val h = totalSeconds / 3600
-                                val m = (totalSeconds % 3600) / 60
-                                val s = totalSeconds % 60
-                                val timeFormatted = if (h > 0) String.format("%d:%02d:%02d", h, m, s) else String.format("%02d:%02d", m, s)
-
-                                // Intensity String (based on the MAJORITY level)
-                                val intensityStr = if (name.contains("Treadmill", true)) {
-                                    val speed = majorityLevelRaw / 10.0
-                                    // Note: We aren't calculating majority incline here to keep it simple, but you could!
-                                    if (speed > 0) " (@ Lvl $speed)" else ""
-                                } else {
-                                    // Bike/Stairs (Level is in 'weight')
-                                    // We need to do the same "Majority" logic for weight if it's a Bike
-                                    // For simplicity, let's grab the weight from the dominant set group
-                                    val dominantWeight = dominantLevelEntry?.value?.firstOrNull()?.weight ?: 0.0
-                                    if (dominantWeight > 0) " (@ Lvl $dominantWeight)" else ""
+                                    val currentBest = maxCardioSpeed[name] ?: 0.0
+                                    if (speed > currentBest) {
+                                        maxCardioSpeed[name] = speed
+                                        // Save as "5.2 mph"
+                                        val niceSpeed = String.format("%.2f", speed)
+                                        prMap[name] = "$niceSpeed mph"
+                                    }
                                 }
-
-                                // RETURN: Pair(The Distance Number, The Nice String)
-                                Pair(totalDist, "$distStr $unit in $timeFormatted$intensityStr")
                             }
 
-                            // NON-CARDIO: Standard Max Logic
-                            else -> {
+                            ExerciseType.LoadedCarry -> {
+                                // 🏋️ LOADED CARRY: Heavier Weight WINS. If Tie, Further Distance WINS.
                                 val bestSet = workoutExercise.sets.maxByOrNull { it.weight }
-                                val bestVal = bestSet?.weight ?: 0.0
-                                val str = if (type == ExerciseType.LoadedCarry) {
-                                    "$bestVal lbs for ${bestSet?.distance ?: 0.0} yds"
-                                } else if (type == ExerciseType.ISOMETRIC) {
-                                    "$bestVal lbs"
-                                } else {
-                                    "$bestVal lbs x ${bestSet?.reps}"
-                                }
-                                Pair(bestVal, str)
-                            }
-                        }
+                                val w = bestSet?.weight ?: 0.0
+                                val d = bestSet?.distance ?: 0.0
 
-                        // B. COMPARE & SAVE
-                        // Only update if this session was "better" (More Distance or More Weight)
-                        val currentMax = maxValues[name] ?: 0.0
-                        if (candidateValue > currentMax) {
-                            maxValues[name] = candidateValue
-                            prMap[name] = displayString
+                                val currentMaxW = maxCarryWeight[name] ?: 0.0
+                                val currentMaxD = maxCarryDist[name] ?: 0.0
+
+                                val isHeavier = w > currentMaxW
+                                val isSameWeightFurther = (w == currentMaxW && d > currentMaxD)
+
+                                if (isHeavier || isSameWeightFurther) {
+                                    maxCarryWeight[name] = w
+                                    maxCarryDist[name] = d
+                                    prMap[name] = "$w lbs for $d yds"
+                                }
+                            }
+
+                            else -> {
+                                // 💪 STRENGTH / ISO / 21s
+                                val bestSet = workoutExercise.sets.maxByOrNull { it.weight }
+                                val w = bestSet?.weight ?: 0.0
+                                val r = bestSet?.reps ?: 0 // Or Time for Isometric
+
+                                val currentMax = maxStrengthWeight[name] ?: 0.0
+                                if (w > currentMax) {
+                                    maxStrengthWeight[name] = w
+                                    if (type == ExerciseType.ISOMETRIC) {
+                                        prMap[name] = "$w lbs"
+                                    } else {
+                                        prMap[name] = "$w lbs x $r" // Simplified string
+                                    }
+                                }
+                            }
                         }
                     }
                 }

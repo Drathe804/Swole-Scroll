@@ -126,6 +126,10 @@ fun DetailExerciseItem(
                 ExerciseType.STRENGTH -> (w * set.reps * multiplier).toInt()
                 ExerciseType.ISOMETRIC -> (w * t * multiplier).toInt()
                 ExerciseType.LoadedCarry -> (w * d * multiplier).toInt()
+                ExerciseType.TWENTY_ONES -> {
+                    val rawVol = (w * set.reps * multiplier)
+                    ((rawVol * 2)/3).toInt()
+                }
                 else -> 0
             }
         }
