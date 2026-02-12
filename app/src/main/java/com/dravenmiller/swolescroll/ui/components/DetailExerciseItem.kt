@@ -31,13 +31,19 @@ import androidx.compose.ui.unit.dp
 import com.dravenmiller.swolescroll.model.ExerciseType
 import com.dravenmiller.swolescroll.model.Set
 import com.dravenmiller.swolescroll.model.WorkoutExercise
+import com.dravenmiller.swolescroll.model.calculateTotalTUT
+import com.dravenmiller.swolescroll.model.calculateTotalVolume
+import java.text.NumberFormat
 
 @Composable
 fun DetailExerciseItem(
-    workoutExercise: WorkoutExercise
+    workoutExercise: WorkoutExercise,
+    userWeight: Double
 ) {
     // STATE: Is the dropdown open?
     var expanded by remember { mutableStateOf(false) }
+    val totalVol = remember(workoutExercise) { workoutExercise.calculateTotalVolume(userWeight) }
+    val totalTime = remember(workoutExercise) { workoutExercise.calculateTotalTUT() }
 
     // Safe Type Fallback
     val safeType = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
@@ -124,7 +130,7 @@ fun DetailExerciseItem(
 
             when(safeType) {
                 ExerciseType.STRENGTH -> (w * set.reps * multiplier).toInt()
-                ExerciseType.ISOMETRIC -> (w * t * multiplier).toInt()
+                ExerciseType.ISOMETRIC -> 0
                 ExerciseType.LoadedCarry -> (w * d * multiplier).toInt()
                 ExerciseType.TWENTY_ONES -> {
                     val rawVol = (w * set.reps * multiplier)
@@ -166,13 +172,34 @@ fun DetailExerciseItem(
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
-                    if (totalVolume > 0) {
-                        Text(
-                            text = "Volume: ${java.text.NumberFormat.getIntegerInstance().format(totalVolume)} lbs",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
+
+                    if (workoutExercise.exercise.type == ExerciseType.ISOMETRIC) {
+                        // Case A: Planks, Wall Sits (Show Time)
+                        if (totalTime > 0) {
+                            // Format seconds into "1m 30s" or just "90s"
+                            val min = totalTime / 60
+                            val sec = totalTime % 60
+                            val timeString = if (min > 0) "${min}m ${sec}s" else "${sec}s"
+
+                            Text(
+                                text = "TUT: $timeString",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.secondary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    } else {
+                        // Case B: Lifting (Show Volume)
+                        if (totalVolume > 0) {
+                            Text(
+                                text = "Volume: ${
+                                    NumberFormat.getIntegerInstance().format(totalVolume)
+                                } lbs",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
 
@@ -234,7 +261,11 @@ fun DetailExerciseItem(
 // UPDATED: Now respects that Weight = Lvl and Reps = Incline
 fun formatDetailSet(set: Set, type: ExerciseType, name: String): String {
     val isTreadmill = name.contains("Treadmill", true) || name.contains("Run", true)
-    val isStairs = name.contains("Stair", true) || name.contains("Step", true)
+    val isStairs = name.contains("Stair", true) ||
+            name.contains("Step", true) ||
+            name.contains("Stairmaster", true) ||
+            name.contains("Stair Master", true
+    )
 
     return when(type) {
         ExerciseType.CARDIO -> {

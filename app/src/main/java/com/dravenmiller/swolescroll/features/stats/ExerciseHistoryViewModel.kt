@@ -5,7 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.dravenmiller.swolescroll.data.WorkoutDao
 import com.dravenmiller.swolescroll.model.Set
-import com.dravenmiller.swolescroll.util.OneRepMaxCalculator // 👈 IMPORT THIS
+import com.dravenmiller.swolescroll.model.WorkoutExercise
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -23,86 +23,53 @@ class ExerciseHistoryViewModel(
     private val exerciseName: String
 ) : ViewModel() {
 
+    // 1. LIST DATA
     private val _history = MutableStateFlow<List<HistoryEntry>>(emptyList())
     val history: StateFlow<List<HistoryEntry>> = _history
 
-    // 👇 1. ADDED: Graph Data State
-    private val _graphData = MutableStateFlow<List<GraphPoint>>(emptyList())
-    val graphData: StateFlow<List<GraphPoint>> = _graphData
+    // 2. GRAPH DATA (Raw Exercises)
+    private val _graphData = MutableStateFlow<List<WorkoutExercise>>(emptyList())
+    val graphData: StateFlow<List<WorkoutExercise>> = _graphData
 
     init {
-        loadHistory()
-        // 👇 2. ADDED: Trigger the graph calculation immediately
-        generateOneRepMaxHistory(exerciseName)
+        // Load everything once when the screen opens
+        generateHistory(exerciseName)
     }
 
-    private fun loadHistory() {
+    // Combined function to load data for BOTH the Graph and the List
+    // We renamed this to be generic since it handles Cardio too now
+    fun generateHistory(name: String) {
         viewModelScope.launch {
-            dao.getAllWorkouts().collect { workouts ->
-                val entries = mutableListOf<HistoryEntry>()
-
-                workouts.forEach { workout ->
-                    val match = workout.exercises.find {
-                        it.exercise.name.equals(exerciseName, ignoreCase = true)
-                    }
-
-                    if (match != null) {
-                        entries.add(HistoryEntry(
-                            workout.date,
-                            match.sets,
-                            match.note ?: ""
-                        ))
-                    }
-                }
-                // Sort by date descending (Newest first) for the list
-                _history.value = entries.sortedByDescending { it.date }
-            }
-        }
-    }
-
-    // 👇 3. ADDED: The Missing Calculation Function
-    fun generateOneRepMaxHistory(name: String) {
-        viewModelScope.launch {
-            // A. Get a snapshot of all workouts
+            // A. Get all workouts once
             val allWorkouts = dao.getAllWorkouts().first()
 
-            // B. Filter & Calculate
-            val points = allWorkouts.mapNotNull { workout ->
-                val exerciseEntry = workout.exercises.find {
-                    it.exercise.name.equals(name, ignoreCase = true)
-                }
+            // B. Flatten to find every instance of this exercise
+            val exercises = allWorkouts.flatMap { workout ->
+                workout.exercises
+                    .filter { it.exercise.name.trim().equals(name.trim(), ignoreCase = true) }
+                    // 👇 CRITICAL: Stamp the date onto the exercise so the Graph can use it!
+                    .map { it.copy(workoutDate = workout.date) }
+            }
 
-                if (exerciseEntry != null) {
-                    // Find Best Set of the day (Smart 1RM)
-                    val bestSet = exerciseEntry.sets.maxByOrNull { set ->
-                        OneRepMaxCalculator.getSmart1RM(set.weight, set.reps)
-                    }
+            // C. Update Graph Data (Sorted Oldest -> Newest)
+            // The graph component will handle the math (Speed vs 1RM)
+            _graphData.value = exercises.sortedBy { it.workoutDate }
 
-                    if (bestSet != null && bestSet.weight > 0.0) {
-                        val estimates = OneRepMaxCalculator.getAllEstimates(bestSet.weight, bestSet.reps)
-
-                        // Label the formula used
-                        val label = when {
-                            bestSet.reps <= 5 -> "Brzycki"
-                            bestSet.reps <= 12 -> "Epley"
-                            else -> "Lombardi"
-                        }
-
-                        GraphPoint(
-                            date = workout.date,
-                            estimates = estimates,
-                            formulaLabel = label
-                        )
-                    } else {
-                        null
-                    }
-                } else {
-                    null
-                }
-            }.sortedBy { it.date } // Sort Oldest -> Newest for the Graph
-
-            _graphData.value = points
+            // D. Update List Data (Sorted Newest -> Oldest)
+            _history.value = exercises.map {
+                HistoryEntry(
+                    date = it.workoutDate,
+                    sets = it.sets,
+                    note = it.note ?: ""
+                )
+            }.sortedByDescending { it.date }
         }
+    }
+
+    // Stub to keep your specific call in init valid if you want to keep the old name
+    // But ideally, just use generateHistory above.
+    fun generateOneRepMaxHistory(name: String) {
+        generateHistory(name)
     }
 }
 

@@ -12,17 +12,23 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface ExerciseDao {
 
-    // Get all exercises alphabetically so the search list looks nice
+    // Get all exercises alphabetically (Flow for UI observation)
     @Query("SELECT * FROM exercise_table ORDER BY name ASC")
     fun getAllExercises(): Flow<List<Exercise>>
+
+    // 👇 NEW: Simple list fetch for the Database Callback check
+    @Query("SELECT * FROM exercise_table")
+    fun getAllExercisesList(): List<Exercise>
 
     @Query("SELECT * FROM exercise_table WHERE name = :name COLLATE NOCASE LIMIT 1")
     suspend fun getExerciseByName(name: String): Exercise?
 
-    // Save a new exercise.
-    // OnConflictStrategy.IGNORE means: "If this ID already exists, just skip it."
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertExercise(exercise: Exercise)
+
+    // 👇 NEW: Bulk insert for Pre-population
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    fun insertAll(exercises: List<Exercise>)
 
     @Update
     suspend fun updateExercise(exercise: Exercise)

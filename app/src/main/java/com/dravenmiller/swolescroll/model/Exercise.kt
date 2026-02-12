@@ -16,4 +16,5 @@ data class Exercise (
     val pushPull: String = "Push", // Push/pull classification (e.g., push or pull)
     val isSingleSide: Boolean = false, // Whether the exercise is one-sided or both sides
     val type: ExerciseType = ExerciseType.STRENGTH, // Enum representing the type of exercise
+    val isBodyweight: Boolean = false, // Whether the exercise uses body weight
     )

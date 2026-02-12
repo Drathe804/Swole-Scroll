@@ -1,19 +1,33 @@
 package com.dravenmiller.swolescroll.features.home
 
 import android.content.Intent
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome // ⚔️ RPG Icon
+import androidx.compose.material.icons.filled.AutoMode
+import androidx.compose.material.icons.filled.Casino
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -22,8 +36,10 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -38,26 +54,48 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dravenmiller.swolescroll.data.BackupManager
 import com.dravenmiller.swolescroll.data.MockData
+import com.dravenmiller.swolescroll.features.profile.UserProfileViewModel
+import com.dravenmiller.swolescroll.features.quests.QuestBoardDialog // 👈 Import
 import com.dravenmiller.swolescroll.model.Workout
 import com.dravenmiller.swolescroll.ui.components.WorkoutCard
 
 // 1. THE CONTROLLER (Handles Logic & ViewModel)
+@RequiresApi(Build.VERSION_CODES.Q)
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel,
     onWorkoutClick: (Workout) -> Unit,
     onFabClick: () -> Unit,
-    onStatsClick: () -> Unit
+    onStatsClick: () -> Unit,
+    onNavigateToProfile: () -> Unit,
+    userViewModel: UserProfileViewModel = viewModel(),
 ) {
     // Collect Data from ViewModel
     val workouts by viewModel.workouts.collectAsState(initial = emptyList())
     val context = LocalContext.current
+    val showMonthlyPrompt by userViewModel.showMonthlyPrompt.collectAsState()
+    var weighInValue by remember { mutableStateOf("") }
+
+    // 👇 1. QUEST LOGIC: Show Dialog if needed
+    if (viewModel.showQuestDialog.value) {
+        QuestBoardDialog(
+            onDismiss = { viewModel.showQuestDialog.value = false },
+            onAcceptQuest = { difficulty -> viewModel.acceptQuest(difficulty) }
+        )
+    }
+
+    // 👇 2. QUEST LOGIC: Handle Navigation
+    if (viewModel.navigateToLog.value) {
+        viewModel.onNavigationHandled()
+        onFabClick() // Re-use the "Go to Log" callback
+    }
 
     // Setup File Picker (Launcher)
     val importLauncher = rememberLauncherForActivityResult(
@@ -68,11 +106,48 @@ fun HomeScreen(
         }
     }
 
-    // Call the UI, passing down the Data and Actions (but NOT the ViewModel)
+    if (showMonthlyPrompt) {
+        AlertDialog(
+            onDismissRequest = { userViewModel.dismissPrompt() },
+            title = { Text("Monthly Weigh-In") },
+            text = {
+                Column {
+                    Text("It's been 30 days! Update your weight to keep difficulty calculations accurate.")
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = weighInValue,
+                        onValueChange = { weighInValue = it },
+                        label = { Text("Current Weight") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val w = weighInValue.toDoubleOrNull()
+                    if (w != null && w > 0) {
+                        // We fetch current profile to keep name/difficulty same
+                        // Ideally ViewModel handles this cleaner, but this works for now
+                        val current = userViewModel.userProfile.value
+                        if (current != null) {
+                            userViewModel.saveProfile(current.name, w, current.defaultDifficulty)
+                        }
+                    }
+                }) { Text("Update") }
+            },
+            dismissButton = {
+                TextButton(onClick = { userViewModel.dismissPrompt() }) { Text("Skip") }
+            }
+        )
+    }
+
+    // Call the UI
     HomeScreenContent(
         workouts = workouts,
         onWorkoutClick = onWorkoutClick,
         onFabClick = onFabClick,
+        // 👇 PASS THE CLICK ACTION DOWN
+        onQuestClick = { viewModel.showQuestDialog.value = true },
         onStatsClick = onStatsClick,
         onShareClick = {
             val uri = BackupManager.getBackupUri(context)
@@ -88,20 +163,22 @@ fun HomeScreen(
         onBackupClick = {viewModel.backupNow()},
         onImportClick = {
             importLauncher.launch("application/json")
-        }
+        },
+        onNavigateToProfile = onNavigateToProfile
     )
 }
 
 // 2. THE UI (Stateless - Pure Design)
-// We moved the Scaffold here so the Preview can use it without crashing!
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreenContent(
     workouts: List<Workout>,
     onWorkoutClick: (Workout) -> Unit,
     onFabClick: () -> Unit,
+    onQuestClick: () -> Unit, // 👈 New Parameter
     onStatsClick: () -> Unit,
     onShareClick: () -> Unit,
+    onNavigateToProfile: () -> Unit,
     onImportClick: () -> Unit,
     onBackupClick: () -> Unit
 ) {
@@ -111,7 +188,6 @@ fun HomeScreenContent(
         topBar = {
             CenterAlignedTopAppBar(
                 title = {
-                    // The Watermark Title
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             text = "The Swole Scroll",
@@ -130,7 +206,6 @@ fun HomeScreenContent(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 ),
-                // LEFT: Settings Gear
                 navigationIcon = {
                     Column {
                         IconButton(onClick = { showSettingsMenu = true }) {
@@ -147,16 +222,7 @@ fun HomeScreenContent(
                                     showSettingsMenu = false
                                     onBackupClick()
                                 },
-                                leadingIcon = {
-                                    Icon(Icons.Default.Save, contentDescription = null)
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Share Backup File") },
-                                onClick = {
-                                    showSettingsMenu = false
-                                    onShareClick()
-                                }
+                                leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Import Backup File") },
@@ -168,8 +234,14 @@ fun HomeScreenContent(
                         }
                     }
                 },
-                // RIGHT: Stats Star
                 actions = {
+                    // 👤 PROFILE BUTTON
+                    IconButton(onClick = onNavigateToProfile) {
+                        Icon(
+                            imageVector = Icons.Default.Person, // Or Icons.Default.AccountCircle
+                            contentDescription = "Profile"
+                        )
+                    }
                     IconButton(onClick = onStatsClick) {
                         Icon(Icons.Default.Star, contentDescription = "Stats")
                     }
@@ -177,12 +249,27 @@ fun HomeScreenContent(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = onFabClick,
-                containerColor = MaterialTheme.colorScheme.secondary,
-                contentColor = MaterialTheme.colorScheme.onSecondary
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(16.dp) // Space between buttons
             ) {
-                Text("+", style = MaterialTheme.typography.headlineMedium)
+                // ⚔️ QUEST BUTTON
+                FloatingActionButton(
+                    onClick = onQuestClick,
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                ) {
+                    Icon(Icons.Default.AutoMode, contentDescription = "Quest")
+                }
+
+                // ➕ ADD BUTTON
+                FloatingActionButton(
+                    onClick = onFabClick,
+                    containerColor = MaterialTheme.colorScheme.secondary,
+                    contentColor = MaterialTheme.colorScheme.onSecondary
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "New Workout")
+                }
             }
         }
     ) { innerPadding ->
@@ -219,7 +306,6 @@ fun HomeScreenContent(
 }
 
 // 3. THE PREVIEW
-// Notice: We preview 'HomeScreenContent' (which takes data), not 'HomeScreen' (which takes ViewModel)
 @Preview
 @Composable
 fun HomeScreenPreview() {
@@ -227,9 +313,11 @@ fun HomeScreenPreview() {
         workouts = MockData.sampleWorkouts,
         onWorkoutClick = {},
         onFabClick = {},
+        onQuestClick = {}, // 👈 Dummy callback for preview
         onStatsClick = {},
         onShareClick = {},
         onBackupClick = {},
-        onImportClick = {}
+        onImportClick = {},
+        onNavigateToProfile = {}
     )
 }

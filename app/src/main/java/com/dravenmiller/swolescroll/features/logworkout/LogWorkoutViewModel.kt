@@ -23,10 +23,13 @@ import com.dravenmiller.swolescroll.model.Set
 import com.dravenmiller.swolescroll.model.Workout
 import com.dravenmiller.swolescroll.model.WorkoutExercise
 import com.google.gson.Gson
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -41,7 +44,7 @@ class LogWorkoutViewModel(
 
 
 
-    // ... (Keep your existing State variables: name, date, note, lists) ...
+    val isQuest = mutableStateOf(false)
     var workoutName = mutableStateOf("")
     var addedExercises = mutableStateListOf<WorkoutExercise>()
     var showDialog = mutableStateOf(false)
@@ -53,14 +56,43 @@ class LogWorkoutViewModel(
     var historyTitle by mutableStateOf("")
     private val _exerciseHistory = MutableStateFlow<List<WorkoutExercise>>(emptyList())
     val exerciseHistory = _exerciseHistory.asStateFlow()
+    private val _exerciseFreshnessMap = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val exerciseFreshnessMap = _exerciseFreshnessMap.asStateFlow()
     var currentWorkoutId: String? = null
+    var activeDungeonId by mutableStateOf<String?>(null)
+
+    init {
+        loadFreshnessHistory()
+        checkForDraft()
+    }
+
+    // 2. Build the Map (Name -> Last Date)
+    private fun loadFreshnessHistory() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val allWorkouts = db.workoutDao().getAllWorkouts().firstOrNull() ?: emptyList()
+            val historyMap = mutableMapOf<String, Long>()
+
+            allWorkouts.forEach { workout ->
+                workout.exercises.forEach { we ->
+                    val currentMax = historyMap[we.exercise.name] ?: 0L
+                    if (workout.date > currentMax) {
+                        historyMap[we.exercise.name] = workout.date
+                    }
+                }
+            }
+            _exerciseFreshnessMap.value = historyMap
+        }
+    }
 
     val exerciseList = db.exerciseDao().getAllExercises()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    // Inside LogWorkoutViewModel.kt
+
+    val userBodyWeight = db.userDao().getUserProfile()
+        .map { it?.bodyWeight ?: 0.0 } // Default to 0 if not set
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     // 1. SMART PR TRACKER (Totals + Dominant Level) 🏆
-    val personalRecords: kotlinx.coroutines.flow.StateFlow<Map<String, String>> =
+    val personalRecords: StateFlow<Map<String, String>> =
         db.workoutDao().getAllWorkouts()
             .map { workouts ->
                 val prMap = mutableMapOf<String, String>()
@@ -78,20 +110,35 @@ class LogWorkoutViewModel(
 
                         when (type) {
                             ExerciseType.CARDIO -> {
-                                // 🏃 CARDIO: Calculate SPEED (Distance / Time)
-                                // We sum the session to get average speed
                                 val totalDist = workoutExercise.sets.sumOf { it.distance ?: 0.0 }
                                 val totalSeconds = workoutExercise.sets.sumOf { it.time ?: 0 }
 
                                 if (totalDist > 0 && totalSeconds > 0) {
-                                    val speed = totalDist / (totalSeconds / 3600.0) // Miles per Hour
+                                    // 🧠 SMART CHECK: Is this Stairs or Distance?
+                                    val isStairs = name.contains("Stair", ignoreCase = true)
 
-                                    val currentBest = maxCardioSpeed[name] ?: 0.0
-                                    if (speed > currentBest) {
-                                        maxCardioSpeed[name] = speed
-                                        // Save as "5.2 mph"
-                                        val niceSpeed = String.format("%.2f", speed)
-                                        prMap[name] = "$niceSpeed mph"
+                                    if (isStairs) {
+                                        // 🪜 STAIRS MATH: Steps per Minute
+                                        val minutes = totalSeconds / 60.0
+                                        val spm = totalDist / minutes
+
+                                        val currentBest = maxCardioSpeed[name] ?: 0.0
+                                        if (spm > currentBest) {
+                                            maxCardioSpeed[name] = spm
+                                            val niceSpm = String.format("%.1f", spm)
+                                            prMap[name] = "$niceSpm stairs/min" // 👈 Explicit unit
+                                        }
+                                    } else {
+                                        // 🏃 RUNNING MATH: Miles per Hour
+                                        val hours = totalSeconds / 3600.0
+                                        val speed = totalDist / hours
+
+                                        val currentBest = maxCardioSpeed[name] ?: 0.0
+                                        if (speed > currentBest) {
+                                            maxCardioSpeed[name] = speed
+                                            val niceSpeed = String.format("%.2f", speed)
+                                            prMap[name] = "$niceSpeed mph" // 👈 Explicit unit
+                                        }
                                     }
                                 }
                             }
@@ -169,6 +216,31 @@ class LogWorkoutViewModel(
                 initialValue = emptyMap()
             )
 
+    fun startDungeon(parentIndex: Int) {
+        if (parentIndex < 0 || parentIndex >= addedExercises.size) return
+        val parent = addedExercises[parentIndex]
+
+        // 🧠 UPDATED LOGIC:
+        // 1. If I am already a Minion (in a dungeon), link the new guy to MY Boss.
+        if (parent.supersetId != null) {
+            activeDungeonId = parent.supersetId
+        }
+        // 2. If I am the Boss (Normal), the new guy links to ME.
+        // We do NOT change the 'parent'. It stays Normal.
+        else {
+            activeDungeonId = parent.id
+        }
+
+        showDialog.value = true
+    }
+
+    // ⚔️ START FRESH DUNGEON (Separate from current)
+    fun startNewDungeon_Fresh() {
+        // Generate a brand new Key for the upcoming exercise
+        activeDungeonId = java.util.UUID.randomUUID().toString()
+        showDialog.value = true
+    }
+
     fun loadHistory(targetExerciseId: String, name: String) {
         historyTitle = name
         viewModelScope.launch {
@@ -176,6 +248,7 @@ class LogWorkoutViewModel(
             val foundHistory = allWorkouts.flatMap { workout -> workout.exercises }
                 //.filter { it.exercise.id == targetExerciseId }
                 .filter { it.exercise.name.trim().equals(name.trim(), ignoreCase = true) }
+                .map { it.copy(workoutDate = it.workoutDate) }
                 _exerciseHistory.value = foundHistory
         }
     }
@@ -185,8 +258,13 @@ class LogWorkoutViewModel(
             val draft = db.draftDao().getDraft()
             if (draft != null) {
                 val savedWorkout = Gson().fromJson(draft.dataJson, Workout::class.java)
-                pendingDraft = savedWorkout
-                showResumeDialog.value = true
+                if(savedWorkout.isQuest){
+                    pendingDraft = savedWorkout
+                    resumeDraft()
+                } else {
+                    pendingDraft = savedWorkout
+                    showResumeDialog.value = true
+                }
             }
         }
     }
@@ -194,7 +272,8 @@ class LogWorkoutViewModel(
         pendingDraft?.let { workout ->
             workoutName.value = workout.name
             workoutDate.value = workout.date
-            workoutNote.value = workout.notes
+            workoutNote.value = workout.notes ?: ""
+            isQuest.value = workout.isQuest
             addedExercises.clear()
             addedExercises.addAll(workout.exercises)
         }
@@ -227,7 +306,8 @@ class LogWorkoutViewModel(
         name: String,
         muscleGroup: String,
         isSingleSide: Boolean,
-        type: ExerciseType
+        type: ExerciseType,
+        isBodyweight: Boolean,
     ){
         viewModelScope.launch {
             val cleanName = name.trim()
@@ -245,7 +325,8 @@ class LogWorkoutViewModel(
                     name = cleanName,
                     muscleGroup = muscleGroup,
                     isSingleSide = isSingleSide,
-                    type = type
+                    type = type,
+                    isBodyweight = isBodyweight
                 )
                 db.exerciseDao().insertExercise(newExercise)
                 newExercise
@@ -301,6 +382,7 @@ class LogWorkoutViewModel(
             workoutDate.value = workout.date
             // FIX: Use 'notes' (plural) if that is what your Data Class uses
             workoutNote.value = workout.notes ?: ""
+            isQuest.value = workout.isQuest
 
             // B. Load Exercises
             addedExercises.clear()
@@ -325,15 +407,46 @@ class LogWorkoutViewModel(
     fun saveWorkout(onSaved: () -> Unit) {
         if (addedExercises.isEmpty()) return
 
-        // Simple Validation
-        val validExercises = addedExercises.filter { exercise ->
-            exercise.sets.any { set ->
-                (set.weight > 0.0) || (set.reps > 0) || ((set.distance ?: 0.0) > 0)
+        // 🧠 SMART VALIDATION: Check fields based on Exercise Type
+        // This ensures "Wall Sit" (Time-based) doesn't get deleted just because Weight is 0.
+        val validExercises = addedExercises.mapNotNull { workoutExercise ->
+            val validSets = workoutExercise.sets.filter { set ->
+                val type = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
+
+                when (type) {
+                    // 🧱 ISOMETRIC: Valid if it has Time OR Weight
+                    ExerciseType.ISOMETRIC -> {
+                        (set.time != null && set.time > 0) || set.weight > 0
+                    }
+
+                    // 🏃 CARDIO: Valid if it has Distance OR Time
+                    ExerciseType.CARDIO -> {
+                        (set.distance != null && set.distance > 0.0) || (set.time != null && set.time > 0)
+                    }
+
+                    // 🏋️ CARRY: Valid if it has Distance OR Weight
+                    ExerciseType.LoadedCarry -> {
+                        (set.distance != null && set.distance > 0.0) || set.weight > 0
+                    }
+
+                    // 💪 STRENGTH / DEFAULT: Needs Weight OR Reps
+                    else -> {
+                        set.weight > 0 || set.reps > 0
+                    }
+                }
+            }
+
+            // Only keep the exercise if it has at least one valid set
+            if (validSets.isNotEmpty()) {
+                workoutExercise.copy(sets = validSets)
+            } else {
+                null
             }
         }
+
         if (validExercises.isEmpty()) {
             android.widget.Toast.makeText(
-                application, "Add some sets first!", android.widget.Toast.LENGTH_SHORT
+                application, "Add some valid sets first!", android.widget.Toast.LENGTH_SHORT
             ).show()
             return
         }
@@ -354,22 +467,21 @@ class LogWorkoutViewModel(
                 id = finalId,
                 name = finalName,
                 date = workoutDate.value,
-                exercises = validExercises,
-                notes = workoutNote.value
+                exercises = validExercises, // 👈 Use the filtered list
+                notes = workoutNote.value,
+                isQuest = isQuest.value
             )
 
             // 4. Save to DB
             db.workoutDao().insertWorkout(workout)
 
-            // 5. Update Exercises Table (🛡️ WITH CRASH FIX)
+            // 5. Update Exercises Table (Safety Check)
             validExercises.forEach { workoutExercise ->
-                // CHECK: Is the Type null? If so, force it to STRENGTH.
                 val safeExercise = if (workoutExercise.exercise.type == null) {
                     workoutExercise.exercise.copy(type = ExerciseType.STRENGTH)
                 } else {
                     workoutExercise.exercise
                 }
-                // Save the safe version
                 db.exerciseDao().insertExercise(safeExercise)
             }
 
@@ -387,6 +499,7 @@ class LogWorkoutViewModel(
     }
 
 
+
     fun splitCardioSet(
         exerciseId: String,
         currentSetIndex: Int,
@@ -402,7 +515,7 @@ class LogWorkoutViewModel(
 
         // 1. CALCULATE MATH: Subtract time from previous sets to get THIS set's duration
         // Sum up all sets EXCEPT the current one we are editing
-        val previousTime = currentSets.filterIndexed { idx, _ -> idx != currentSetIndex }.sumOf { it.time }
+        val previousTime = currentSets.filterIndexed { idx, _ -> idx != currentSetIndex }.sumOf { it.time ?: 0 }
 
         // This set's actual length = Total Timer - Time used in previous sets
         val thisSetDuration = elapsedSeconds - previousTime
@@ -448,7 +561,8 @@ class LogWorkoutViewModel(
     fun applyTreadmillDistance(totalDistance: Double) {
         // Loop through all added exercises
         addedExercises.forEachIndexed { index, workoutExercise ->
-            if (workoutExercise.exercise.name.contains("Treadmill", ignoreCase = true)) {
+            val type = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
+            if (type == ExerciseType.TREADMILL) {
 
                 // Run the magic math helper
                 val updatedSets = distributeTotalDistance(totalDistance, workoutExercise.sets)

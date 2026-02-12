@@ -1,29 +1,16 @@
 package com.dravenmiller.swolescroll.ui.components
 
+import androidx.compose.ui.graphics.Color
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColor
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -38,11 +25,13 @@ import androidx.compose.ui.unit.dp
 import com.dravenmiller.swolescroll.model.ExerciseType
 import com.dravenmiller.swolescroll.model.Set
 import com.dravenmiller.swolescroll.model.WorkoutExercise
+import com.dravenmiller.swolescroll.util.BodyweightMath
 import kotlinx.coroutines.delay
 
 @Composable
 fun EditExerciseItem(
     workoutExercise: WorkoutExercise,
+    userWeight: Double = 0.0,
     isExpanded: Boolean,
     personalRecord: String?,
     isNewPr: Boolean,
@@ -54,14 +43,18 @@ fun EditExerciseItem(
     onRemoveSet: (Int) -> Unit,
     onUpdateNote: (String) -> Unit,
     onDelete: () -> Unit,
-    onTreadmillSplit: (Int, Double, Int) -> Unit
+    onTreadmillSplit: (Int, Double, Int) -> Unit,
+    backgroundColor: Color? = null
 ) {
     var selectedTab by remember { mutableStateOf(0) }
     var showExitWarning by remember { mutableStateOf(false) }
+    val cardColor = backgroundColor ?: MaterialTheme.colorScheme.surface
 
     // --- LIVE TIMER STATE ---
     var activeSeconds by remember { mutableStateOf(0) }
     val currentSet = workoutExercise.sets.lastOrNull()
+
+    // ... (Keep your Animation Logic for PRs here) ...
     val infiniteTransition = rememberInfiniteTransition(label = "PR_Breath")
     val prColor by infiniteTransition.animateColor(
         initialValue = MaterialTheme.colorScheme.secondary,
@@ -74,7 +67,7 @@ fun EditExerciseItem(
     )
     val prScale by infiniteTransition.animateFloat(
         initialValue = 1f,
-        targetValue = 1.1f, // Make the numbers pop!
+        targetValue = 1.1f,
         animationSpec = infiniteRepeatable(
             animation = tween(1000, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
@@ -82,29 +75,23 @@ fun EditExerciseItem(
         label = "Scale"
     )
 
-    // 🛡️ CRASH FIX: Force a default type if it is null in the database
+    // 🛡️ CRASH FIX: Force a default type
     val safeType = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
 
-    // MAPPING: Weight = Level, Reps = Incline
-    val currentLevelRaw = if (currentSet != null) currentSet.weight else 0.0
-    val currentInclineRaw = if (currentSet != null) currentSet.reps else 0
+    // 🧠 1. REPLACE STRING CHECKS WITH TYPE CHECKS
+    val isTreadmill = safeType == ExerciseType.TREADMILL
+    val isStairs = safeType == ExerciseType.STAIRS
 
-    val isStairs = remember(workoutExercise.exercise.name) {
-        workoutExercise.exercise.name.contains("Stair", ignoreCase = true) ||
-                workoutExercise.exercise.name.contains("Step", ignoreCase = true)
-    }
-    val isTreadmill = remember(workoutExercise.exercise.name) {
-        workoutExercise.exercise.name.contains("Treadmill", ignoreCase = true)
-    }
-
-    // Smart "Is Moving" Check
     val primaryVal = currentSet?.weight ?: 0.0
+    // If treadmill, secondary is Reps (Incline). Otherwise 0.
     val secondaryValRaw = if (isTreadmill) (currentSet?.reps ?: 0) else 0
     val isMoving = primaryVal > 0.0
 
-    // ⏱️ TIMER LOGIC (Now using safeType)
+    // ⏱️ TIMER LOGIC (Updated to check .isCardio property)
     LaunchedEffect(safeType, isExpanded, isMoving) {
-        if (safeType == ExerciseType.CARDIO && isExpanded && isMoving) {
+        // 👇 CHECK PROPERTY, NOT ENUM EQUALITY
+        // This ensures Timer works for Treadmill, Stairs, Rowing, etc.
+        if (safeType.isCardio && isExpanded && isMoving) {
             val startTime = System.currentTimeMillis()
             val initialSeconds = activeSeconds
 
@@ -116,11 +103,20 @@ fun EditExerciseItem(
         }
     }
 
+    val bwMultiplier = remember(workoutExercise.exercise.name) {
+        BodyweightMath.getMultiplier(workoutExercise.exercise.name)
+    }
+
 
     val currentVolume = remember(workoutExercise.sets, workoutExercise.exercise.isSingleSide) {
         workoutExercise.sets.sumOf { set ->
             val multiplier = if (workoutExercise.exercise.isSingleSide) 2 else 1
-            val safeWeight = set.weight
+            // 3. Calculate the "Ghost" Total
+            val safeWeight = if (workoutExercise.exercise.isBodyweight) {
+                (userWeight * bwMultiplier) + set.weight
+            } else {
+                set.weight
+            }
             val safeDist = set.distance ?: 0.0
             val safeTime = set.time ?: 0
 
@@ -137,15 +133,14 @@ fun EditExerciseItem(
         }
     }
 
-    BackHandler(enabled = isExpanded && isMoving && safeType == ExerciseType.CARDIO) {
+    // 🛡️ BackHandler Check (Using .isCardio property)
+    BackHandler(enabled = isExpanded && isMoving && safeType.isCardio) {
         showExitWarning = true
     }
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        colors = CardDefaults.cardColors(containerColor = if (isExpanded) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        colors = CardDefaults.cardColors(containerColor = cardColor),
         elevation = CardDefaults.cardElevation(defaultElevation = if (isExpanded) 4.dp else 1.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -154,7 +149,8 @@ fun EditExerciseItem(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable {
-                        if (isExpanded && isMoving && safeType == ExerciseType.CARDIO) {
+                        // Check property here too
+                        if (isExpanded && isMoving && safeType.isCardio) {
                             showExitWarning = true
                         } else {
                             onHeaderClick()
@@ -169,55 +165,43 @@ fun EditExerciseItem(
                         Text(text = "Vol: ${java.text.NumberFormat.getIntegerInstance().format(currentVolume)} lbs", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                     }
 
+                    // ... (PR Logic kept mostly same, small tweak for Cardio check) ...
                     if (personalRecord != null) {
                         if(isNewPr) {
                             Text(
                                 text = "NEW PR: $personalRecord",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = prColor, // Animated Color
+                                color = prColor,
                                 fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.graphicsLayer {
-                                    scaleX = prScale
-                                    scaleY = prScale
-                                    transformOrigin = TransformOrigin(0f, 0.5f) // Scale from left
-                                }
+                                modifier = Modifier.graphicsLayer { scaleX = prScale; scaleY = prScale; transformOrigin = TransformOrigin(0f, 0.5f) }
                             )
                         } else {
                             val prText = remember(personalRecord, safeType) {
                                 if (personalRecord.contains("mi") ||
                                     personalRecord.contains("stairs") ||
                                     personalRecord.contains("yds") ||
-                                    personalRecord.contains("mph")
+                                    personalRecord.contains("mph") ||
+                                    personalRecord.contains("/min")
                                 ) {
                                     personalRecord
-                                } else if (safeType == ExerciseType.CARDIO && personalRecord.contains(
-                                        "lbs"
-                                    )
-                                ) {
-                                    val rawNum =
-                                        personalRecord.split(" ").firstOrNull() ?: personalRecord
+                                } else if (safeType.isCardio && personalRecord.contains("lbs")) {
+                                    // Handle legacy data conversion for display
+                                    val rawNum = personalRecord.split(" ").firstOrNull() ?: personalRecord
                                     "Max Lvl $rawNum"
                                 } else {
                                     if (safeType == ExerciseType.ISOMETRIC) {
-                                        val rawNum =
-                                            personalRecord.split(" ").firstOrNull()
-                                                ?: personalRecord
+                                        val rawNum = personalRecord.split(" ").firstOrNull() ?: personalRecord
                                         "$rawNum lbs"
                                     } else {
                                         if (personalRecord.contains("lbs")) personalRecord else "$personalRecord lbs"
                                     }
                                 }
                             }
-
-                            Text(
-                                text = "PR: $prText",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.secondary,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                            Text(text = "PR: $prText", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
+                // ... (Icons keep same) ...
                 Column {
                     Row {
                         IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, "Remove", tint = MaterialTheme.colorScheme.error) }
@@ -229,7 +213,10 @@ fun EditExerciseItem(
 
             AnimatedVisibility(visible = isExpanded) {
                 Column {
-                    TabRow(selectedTabIndex = selectedTab) {
+                    TabRow(
+                        selectedTabIndex = selectedTab,
+                        containerColor = Color.Transparent,
+                    ) {
                         Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Sets") })
                         Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Notes") })
                     }
@@ -237,12 +224,11 @@ fun EditExerciseItem(
 
                     if (selectedTab == 0) {
                         Column {
-                            // Using safeType here
-                            if (safeType == ExerciseType.CARDIO && isExpanded) {
+                            // 🧠 2. Check Property .isCardio
+                            if (safeType.isCardio && isExpanded) {
 
                                 Text("Live Controls", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
 
-                                // Live Timer
                                 Text(
                                     text = String.format("%02d:%02d", activeSeconds / 60, activeSeconds % 60),
                                     style = MaterialTheme.typography.displayMedium,
@@ -252,87 +238,88 @@ fun EditExerciseItem(
 
                                 // Unified Controls
                                 CardioControls(
-                                    isTreadmill = isTreadmill,
+                                    isTreadmill = isTreadmill, // This now comes from Enum check
                                     primaryValue = primaryVal,
                                     secondaryValueRaw = secondaryValRaw,
-                                    onPrimaryChange = { newValue ->
-                                        onTreadmillSplit(activeSeconds, newValue, secondaryValRaw)
-                                    },
-                                    onSecondaryChange = { newRaw ->
-                                        onTreadmillSplit(activeSeconds, primaryVal, newRaw)
-                                    }
+                                    onPrimaryChange = { newValue -> onTreadmillSplit(activeSeconds, newValue, secondaryValRaw) },
+                                    onSecondaryChange = { newRaw -> onTreadmillSplit(activeSeconds, primaryVal, newRaw) }
                                 )
                                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                             }
 
-
                             // Headers
                             Row(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
-                                // 1. "Set" Column (Always there)
                                 Text("Set", modifier = Modifier.width(28.dp), style = MaterialTheme.typography.labelSmall)
 
-                                // 2. Dynamic Columns
-                                when (safeType) {
-                                    // 🏃 CARDIO (Complex: Treadmill vs Regular)
-                                    ExerciseType.CARDIO -> {
-                                        if (isTreadmill) {
-                                            Text("Dist", modifier = Modifier.weight(0.8f), style = MaterialTheme.typography.labelSmall)
-                                            Spacer(Modifier.width(4.dp))
-                                            Text("Time", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
-                                            Spacer(Modifier.width(4.dp))
-                                            Text("Lvl", modifier = Modifier.weight(0.6f), style = MaterialTheme.typography.labelSmall) // Speed
-                                            Spacer(Modifier.width(4.dp))
-                                            Text("Inc", modifier = Modifier.weight(0.6f), style = MaterialTheme.typography.labelSmall) // Incline
-                                        } else {
-                                            Text(if (isStairs) "Stairs" else "Dist", modifier = Modifier.weight(0.8f), style = MaterialTheme.typography.labelSmall)
-                                            Spacer(Modifier.width(4.dp))
-                                            Text("Time", modifier = Modifier.weight(1.2f), style = MaterialTheme.typography.labelSmall)
-                                            Spacer(Modifier.width(4.dp))
-                                            Text("Lvl", modifier = Modifier.weight(0.8f), style = MaterialTheme.typography.labelSmall)
-                                        }
+                                // 🧠 3. Cleaner When Statement
+                                when {
+                                    isTreadmill -> {
+                                        Text("Dist", modifier = Modifier.weight(0.8f), style = MaterialTheme.typography.labelSmall)
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Time", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Spd", modifier = Modifier.weight(0.6f), style = MaterialTheme.typography.labelSmall) // Changed from Lvl
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Inc", modifier = Modifier.weight(0.6f), style = MaterialTheme.typography.labelSmall)
                                     }
-                                    // 🧘 ISOMETRIC (Planks: Weight + Time)
-                                    ExerciseType.ISOMETRIC -> {
+                                    safeType.isCardio -> {
+                                        Text(if (isStairs) "Stairs" else "Dist", modifier = Modifier.weight(0.8f), style = MaterialTheme.typography.labelSmall)
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Time", modifier = Modifier.weight(1.2f), style = MaterialTheme.typography.labelSmall)
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Lvl", modifier = Modifier.weight(0.8f), style = MaterialTheme.typography.labelSmall)
+                                    }
+                                    safeType == ExerciseType.ISOMETRIC -> {
                                         Text("Lbs", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                         Spacer(Modifier.width(8.dp))
                                         Text("Time", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                     }
-
-                                    // 🚶 LOADED CARRY (Farmers Walk: Weight + Distance)
-                                    ExerciseType.LoadedCarry -> {
+                                    safeType == ExerciseType.LoadedCarry -> {
                                         Text("Lbs", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                         Spacer(Modifier.width(8.dp))
                                         Text("Dist", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                     }
-
-                                    // 💪 STRENGTH (Standard: Weight + Reps)
-                                    else -> {
+                                    else -> { // Strength & 21s
                                         Text("Lbs", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                         Spacer(Modifier.width(8.dp))
                                         Text("Reps", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                     }
                                 }
-
-                                // 3. Space for the "Close" (X) button
                                 Spacer(modifier = Modifier.width(30.dp))
                             }
 
-
                             workoutExercise.sets.forEachIndexed { index, set ->
-                                SetInputRow(
-                                    setNumber = index + 1,
-                                    set = set,
-                                    type = safeType, // Use Safe Type
-                                    isEditable = index == workoutExercise.sets.lastIndex,
-                                    isStairs = isStairs,
-                                    isTreadmill = isTreadmill,
-                                    onUpdate = { updatedSet -> onUpdateSet(index, updatedSet) },
-                                    onRemove = { onRemoveSet(index) }
-                                )
+                                Column {
+                                    SetInputRow(
+                                        setNumber = index + 1,
+                                        set = set,
+                                        type = safeType,
+                                        isEditable = index == workoutExercise.sets.lastIndex,
+                                        isStairs = isStairs,
+                                        isTreadmill = isTreadmill,
+                                        onUpdate = { updatedSet -> onUpdateSet(index, updatedSet) },
+                                        onRemove = { onRemoveSet(index) }
+                                    )
+
+                                    if (workoutExercise.exercise.isBodyweight && userWeight > 0) {
+                                        val totalEffectiveLoad = (userWeight * bwMultiplier) + set.weight
+
+                                        // Only show if expanded/editable, or always? Usually good to show always for clarity.
+                                        Text(
+                                            text = "Total Load: ${String.format("%.1f", totalEffectiveLoad)} lbs",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                            modifier = Modifier.padding(start = 36.dp, bottom = 4.dp) // Indent to align with inputs
+                                        )
+                                    }
+                                }
                             }
+
                             TextButton(onClick = onAddSet) { Text("+ Add Set") }
                         }
                     } else {
+                        // Notes tab (Same)
                         OutlinedTextField(value = workoutExercise.note ?: "", onValueChange = onUpdateNote, label = { Text("Notes") }, modifier = Modifier.fillMaxWidth().height(150.dp), maxLines = 5)
                         if (pastNotes.isNotEmpty()) {
                             Spacer(Modifier.height(8.dp))
@@ -346,6 +333,7 @@ fun EditExerciseItem(
                 Text("${workoutExercise.sets.size} Sets", style = MaterialTheme.typography.bodySmall)
             }
             if (showExitWarning) {
+                // (Alert Dialog logic keeps same)
                 AlertDialog(
                     onDismissRequest = { showExitWarning = false },
                     title = { Text("Workout in progress") },
@@ -387,7 +375,6 @@ fun SetInputRow(
     onRemove: () -> Unit
 ) {
     val safeTime = set.time ?: 0
-    // Weight Text Logic
     var weightText by remember(set.id) { mutableStateOf(if (set.weight == 0.0) "" else set.weight.toString().removeSuffix(".0")) }
 
     // Reps Text Logic
@@ -410,7 +397,8 @@ fun SetInputRow(
     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text("$setNumber", modifier = Modifier.width(28.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-        if (type == ExerciseType.CARDIO) {
+        // 🧠 4. Switch logic to use .isCardio property
+        if (type.isCardio) {
             if (isEditable) {
                 Surface(
                     modifier = Modifier.weight(1f).height(56.dp),
@@ -433,47 +421,31 @@ fun SetInputRow(
                             onSecChange = { secondsText = it; updateTime(minutesText, it) { t -> onUpdate(set.copy(time = t)) } }
                         )
 
-                        // 3. LEVEL (Was Incline) - Mapped to Weight (Double)
+                        // 3. SPECIAL CONTROLS (Treadmill vs Regular)
                         if (isTreadmill) {
                             CompactTextField(
                                 value = weightText,
                                 onValueChange = { if (validateDecimal(it)) { weightText = it; onUpdate(set.copy(weight = it.toDoubleOrNull() ?: 0.0)) } },
-                                placeholder = "Lvl", // 🆕 Changed from ""
+                                placeholder = "Spd", // Changed from Lvl
                                 modifier = Modifier.weight(0.6f),
                                 keyboardType = KeyboardType.Decimal,
                                 imeAction = ImeAction.Next
                             )
-
-                            // 🔄 SWAP BUTTON (Use this to fix old history!)
+                            // Swap Button
                             IconButton(
                                 onClick = {
                                     val valInWeightSlot = set.weight
                                     val valInRepsSlot = set.reps / 10.0
-                                    onUpdate(set.copy(
-                                        weight = valInRepsSlot,
-                                        reps = (valInWeightSlot * 10).toInt()
-                                    ))
+                                    onUpdate(set.copy(weight = valInRepsSlot, reps = (valInWeightSlot * 10).toInt()))
                                 },
                                 modifier = Modifier.size(32.dp).padding(horizontal = 2.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = "Swap",
-                                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
-                                )
+                                Icon(Icons.Default.Refresh, "Swap", tint = MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
                             }
-
-                            // 4. INCLINE (Was Level) - Mapped to Reps (Int * 10)
                             CompactTextField(
                                 value = repsText,
-                                onValueChange = {
-                                    if (validateDecimal(it)) {
-                                        repsText = it
-                                        val decimalValue = it.toDoubleOrNull() ?: 0.0
-                                        onUpdate(set.copy(reps = (decimalValue * 10).toInt()))
-                                    }
-                                },
-                                placeholder = "Inc", // 🆕 Changed from "Lvl"
+                                onValueChange = { if (validateDecimal(it)) { repsText = it; val decimalValue = it.toDoubleOrNull() ?: 0.0; onUpdate(set.copy(reps = (decimalValue * 10).toInt())) } },
+                                placeholder = "Inc",
                                 modifier = Modifier.weight(0.6f),
                                 keyboardType = KeyboardType.Decimal,
                                 imeAction = ImeAction.Done
@@ -497,14 +469,14 @@ fun SetInputRow(
                 Text(set.timeFormatted(), modifier = Modifier.weight(1f), style = readOnlyTextStyle, textAlign = TextAlign.Center)
 
                 if (isTreadmill) {
-                    // 🧠 3. READ ONLY: Display Weight as Lvl, Reps as Inc
-                    Text("Lvl ${set.weight}", modifier = Modifier.weight(0.6f), style = readOnlyTextStyle, textAlign = TextAlign.Center)
+                    Text("Spd ${set.weight}", modifier = Modifier.weight(0.6f), style = readOnlyTextStyle, textAlign = TextAlign.Center)
                     Text("${set.reps / 10.0}%", modifier = Modifier.weight(0.6f), style = readOnlyTextStyle, textAlign = TextAlign.End)
                 } else {
                     Text("Lvl ${set.weight}".removeSuffix(".0"), modifier = Modifier.weight(0.8f), style = readOnlyTextStyle, textAlign = TextAlign.End)
                 }
             }
         } else if (type == ExerciseType.ISOMETRIC) {
+            // ... (Isometric layout stays same) ...
             if (isEditable) {
                 OutlinedTextField(value = weightText, onValueChange = { if (validateDecimal(it)) { weightText = it; onUpdate(set.copy(weight = it.toDoubleOrNull() ?: 0.0)) } }, modifier = Modifier.weight(1f), placeholder = { Text("Lbs") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next))
                 Spacer(Modifier.width(8.dp))
@@ -518,6 +490,7 @@ fun SetInputRow(
                 Text(set.timeFormatted(), modifier = Modifier.weight(1f), style = readOnlyTextStyle)
             }
         } else if (type == ExerciseType.LoadedCarry) {
+            // ... (Loaded Carry layout stays same) ...
             if (isEditable) {
                 OutlinedTextField(value = weightText, onValueChange = { if (validateDecimal(it)) { weightText = it; onUpdate(set.copy(weight = it.toDoubleOrNull() ?: 0.0)) } }, modifier = Modifier.weight(1f), placeholder = { Text("Lbs") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done))
                 Spacer(Modifier.width(8.dp))
@@ -543,6 +516,43 @@ fun SetInputRow(
         }
     }
 }
+
+@Composable
+fun CardioControls(
+    isTreadmill: Boolean,
+    primaryValue: Double,
+    secondaryValueRaw: Int,
+    onPrimaryChange: (Double) -> Unit,
+    onSecondaryChange: (Int) -> Unit
+) {
+    val primaryLabel = if(isTreadmill) "Speed" else "Level"
+    val primaryStep = 0.5 // Treadmill speed usually moves in 0.5 or 0.1 increments
+
+    val displaySecondary = if (secondaryValueRaw == 0) "0.0" else (secondaryValueRaw / 10.0).toString()
+
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        ControlCluster(
+            label = primaryLabel,
+            value = "$primaryValue",
+            onDecrease = { onPrimaryChange((primaryValue - primaryStep).coerceAtLeast(0.0)) },
+            onIncrease = { onPrimaryChange(primaryValue + primaryStep) }
+        )
+
+        if (isTreadmill) {
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp).width(200.dp))
+            ControlCluster(
+                label = "Incline",
+                value = displaySecondary,
+                onDecrease = { onSecondaryChange((secondaryValueRaw - 5).coerceAtLeast(0)) },
+                onIncrease = { onSecondaryChange(secondaryValueRaw + 5) }
+            )
+        }
+    }
+}
+
 
 @Composable
 fun CompactTextField(
@@ -638,53 +648,7 @@ fun ControlCluster(
     }
 }
 
-@Composable
-fun CardioControls(
-    isTreadmill: Boolean,
-    primaryValue: Double,
-    secondaryValueRaw: Int,
-    onPrimaryChange: (Double) -> Unit,
-    onSecondaryChange: (Int) -> Unit
-) {
-    val primaryLabel = "Level"
-    val primaryStep = 1.0
 
-    val displaySecondary = if (secondaryValueRaw == 0) "0.0" else (secondaryValueRaw / 10.0).toString()
-
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        ControlCluster(
-            label = primaryLabel,
-            value = "$primaryValue",
-            onDecrease = {
-                val newItem = (primaryValue - primaryStep).coerceAtLeast(0.0)
-                onPrimaryChange(newItem)
-            },
-            onIncrease = {
-                onPrimaryChange(primaryValue + primaryStep)
-            }
-        )
-
-        if (isTreadmill) {
-            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp).width(200.dp))
-
-            ControlCluster(
-                label = "Incline",
-                value = displaySecondary,
-                onDecrease = {
-                    val newItem = if (secondaryValueRaw <= 0) 0 else secondaryValueRaw - 5
-                    onSecondaryChange(newItem)
-                },
-                onIncrease = {
-                    val newItem = secondaryValueRaw + 5
-                    onSecondaryChange(newItem)
-                }
-            )
-        }
-    }
-}
 
 // Logic Helpers
 fun validateDecimal(text: String): Boolean {

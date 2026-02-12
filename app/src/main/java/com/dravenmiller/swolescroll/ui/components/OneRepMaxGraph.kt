@@ -1,11 +1,8 @@
 package com.dravenmiller.swolescroll.ui.components
 
-import android.R.attr.path
 import android.graphics.Paint
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -16,83 +13,135 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.dravenmiller.swolescroll.features.stats.GraphPoint // Make sure this imports correctly
+import com.dravenmiller.swolescroll.model.ExerciseType
+import com.dravenmiller.swolescroll.model.WorkoutExercise
 import com.dravenmiller.swolescroll.util.OneRepMaxCalculator
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 enum class GraphMode {
     SMART, EPLEY, BRZYCKI, LOMBARDI, OCONNER, BEST
 }
+
 @Composable
 fun OneRepMaxGraph(
-    data: List<GraphPoint>,
-    modifier: Modifier = Modifier,
-    lineColor: Color = MaterialTheme.colorScheme.primary,
-    fillColor: Color = MaterialTheme.colorScheme.primaryContainer,
-    selectedMode: GraphMode = GraphMode.SMART
+    history: List<WorkoutExercise>,
+    modifier: Modifier = Modifier.fillMaxWidth().height(250.dp),
+    selectedMode: GraphMode = GraphMode.SMART,
+    lineColor: Color = MaterialTheme.colorScheme.primary
 ) {
-    if (data.isEmpty()) {
-        Box(modifier = modifier.height(200.dp), contentAlignment = Alignment.Center) {
+    if (history.isEmpty()) {
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
             Text("Not enough data to graph yet!", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         return
     }
 
-    // 1. Calculate Scales 📐
-    // We add a little "padding" (5%) to the top/bottom so the line doesn't touch the edge
-    val maxVal = data.maxOf { it.estimates.best }
-    val minVal = data.minOf { it.estimates.lombardi }
-    val yRange = (maxVal - minVal).coerceAtLeast(10.0) // Avoid divide by zero
+    // 1. DETECT TYPE & CONFIGURATION
+    val latestEntry = history.first()
+    val type = latestEntry.exercise.type ?: ExerciseType.STRENGTH
 
-    val minDate = data.minOf { it.date }
-    val maxDate = data.maxOf { it.date }
+    // "Formula Mode" is only for Lifting (Strength/21s).
+    // Cardio, Iso, and Carry use raw values.
+    val useFormulas = (type == ExerciseType.STRENGTH || type == ExerciseType.TWENTY_ONES)
+
+    // 2. PREPARE DATA 📊
+    data class PlotPoint(
+        val date: Long,
+        val value: Double, // The main value to graph (Speed, Weight, or Selected 1RM)
+        val estimates: OneRepMaxCalculator.Estimates? = null // Stored ONLY if we are in Formula Mode
+    )
+
+    val dataPoints = remember(history, type, selectedMode) {
+        history.mapNotNull { entry ->
+            val date = entry.workoutDate
+
+            when {
+                // A. CARDIO (Speed)
+                type.isCardio -> {
+                    val dist = entry.sets.sumOf { it.distance ?: 0.0 }
+                    val time = entry.sets.sumOf { it.time ?: 0 }
+                    val value = if (time > 0) {
+                        if (type == ExerciseType.STAIRS) (dist / (time / 60.0)) // Steps/Min
+                        else (dist / (time / 3600.0)) // MPH
+                    } else 0.0
+                    if (value > 0) PlotPoint(date, value) else null
+                }
+
+                // B. LOADED CARRY (Volume: Weight * Distance)
+                type == ExerciseType.LoadedCarry -> {
+                    // Find the single set with the highest volume
+                    val bestSet = entry.sets.maxByOrNull { (it.weight * (it.distance ?: 0.0)) }
+                    if (bestSet != null) {
+                        val volume = bestSet.weight * (bestSet.distance ?: 0.0)
+                        if (volume > 0) PlotPoint(date, volume) else null
+                    } else null
+                }
+
+                // C. ISOMETRIC (Raw Max Weight)
+                type == ExerciseType.ISOMETRIC -> {
+                    val maxWeight = entry.sets.maxOfOrNull { it.weight } ?: 0.0
+                    if (maxWeight >= 0) PlotPoint(date, maxWeight) else null
+                }
+
+                // D. STRENGTH (1RM Formulas)
+                else -> {
+                    val bestSet = entry.sets.maxByOrNull { it.weight }
+                    if (bestSet != null && bestSet.weight > 0) {
+                        val est = OneRepMaxCalculator.getAllEstimates(bestSet.weight, bestSet.reps)
+                        val heroValue = when (selectedMode) {
+                            GraphMode.SMART -> est.smart
+                            GraphMode.EPLEY -> est.epley
+                            GraphMode.BRZYCKI -> est.brzycki
+                            GraphMode.LOMBARDI -> est.lombardi
+                            GraphMode.OCONNER -> est.oconner
+                            GraphMode.BEST -> est.best
+                        }
+                        PlotPoint(date, heroValue, est)
+                    } else null
+                }
+            }
+        }.sortedBy { it.date }
+    }
+
+    if (dataPoints.isEmpty()) return
+
+    // 3. SCALING 📐
+    val maxVal = dataPoints.maxOf {
+        if (useFormulas && it.estimates != null) it.estimates.best else it.value
+    } * 1.05
+
+    val minVal = dataPoints.minOf {
+        if (useFormulas && it.estimates != null) it.estimates.lombardi else it.value
+    } * 0.95
+
+    val yRange = (maxVal - minVal).coerceAtLeast(1.0)
+    val minDate = dataPoints.first().date
+    val maxDate = dataPoints.last().date
     val xRange = (maxDate - minDate).coerceAtLeast(1L)
 
-    val heroColor = MaterialTheme.colorScheme.primary
-
-    // 2. Formatters 📅
-    val dateFormat = remember { SimpleDateFormat("MMM d", Locale.getDefault()) }
-
-    Canvas(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(250.dp) // Standard graph height
-            .padding(16.dp)
-    ) {
+    // 4. DRAWING 🎨
+    Canvas(modifier = modifier.padding(16.dp)) {
         val width = size.width
         val height = size.height
 
-        // 3. Coordinate Transformer Function 🤖
-        // Converts "315 lbs on Jan 1st" -> "Pixel(x: 50, y: 200)"
-        fun getX(date: Long): Float {
-            return ((date - minDate) / xRange.toFloat()) * width
-        }
-
+        fun getX(date: Long): Float = ((date - minDate) / xRange.toFloat()) * width
         fun getY(value: Double): Float {
-            // Invert Y because Canvas (0,0) is top-left
             val normalized = (value - minVal) / yRange
             return height - (normalized.toFloat() * height)
         }
 
-        // 4. Draw Grid Lines (Background) 📏
+        // --- GRID ---
         val steps = 4
         for (i in 0..steps) {
             val yRatio = i / steps.toFloat()
             val y = height - (yRatio * height)
             val value = minVal + (yRatio * yRange)
 
-            // Draw Line
             drawLine(
                 color = Color.Gray.copy(alpha = 0.2f),
                 start = Offset(0f, y),
@@ -100,63 +149,52 @@ fun OneRepMaxGraph(
                 strokeWidth = 1.dp.toPx()
             )
 
-            // Draw Text Label
-            drawContext.canvas.nativeCanvas.drawText(
-                "${value.toInt()}",
-                0f,
-                y - 5f,
-                Paint().apply {
-                    color = android.graphics.Color.GRAY
-                    textSize = 30f
+            // Y-Label Logic
+            val label = when {
+                type == ExerciseType.STAIRS -> "${value.toInt()}" // Steps are whole numbers
+                type.isCardio -> String.format("%.1f", value)     // Speed needs decimals
+                type == ExerciseType.LoadedCarry -> {
+                    // Format large volume numbers (e.g. 2500 -> 2.5k)
+                    val vol = value.toInt()
+                    if (vol >= 1000) String.format("%.1fk", vol / 1000.0) else "$vol"
                 }
+                else -> "${value.toInt()}"                        // Weight is usually whole number
+            }
+
+            drawContext.canvas.nativeCanvas.drawText(
+                label, 0f, y - 5f,
+                Paint().apply { color = android.graphics.Color.GRAY; textSize = 30f }
             )
         }
 
-        // 2. HELPER TO DRAW A LINE ✍️
-        fun drawTrendLine(
-            extractor: (OneRepMaxCalculator.Estimates) -> Double,
-            color: Color,
-            alpha: Float = 1f,
-            strokeWidth: Float = 3.dp.toPx()
-        ) {
+        fun drawLineFromPoints(extractor: (PlotPoint) -> Double, color: Color, alpha: Float = 1f, stroke: Float = 3.dp.toPx()) {
             val path = Path()
-            data.forEachIndexed { index, point ->
+            dataPoints.forEachIndexed { index, point ->
                 val x = getX(point.date)
-                val y = getY(extractor(point.estimates))
+                val y = getY(extractor(point))
                 if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
             }
-            drawPath(
-                path = path,
-                color = color.copy(alpha = alpha),
-                style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-            )
+            drawPath(path, color.copy(alpha = alpha), style = Stroke(width = stroke, cap = StrokeCap.Round))
         }
 
-        // 3. DRAW GHOST LINES 👻 (The ones not selected)
-        // We draw them thin and faint
-        if (selectedMode != GraphMode.EPLEY) drawTrendLine({ it.epley }, Color.Gray, 0.5f, 2f)
-        if (selectedMode != GraphMode.BRZYCKI) drawTrendLine({ it.brzycki }, Color.Gray, 0.5f, 2f)
-        if (selectedMode != GraphMode.LOMBARDI) drawTrendLine({ it.lombardi }, Color.Gray, 0.5f, 2f)
-        if (selectedMode != GraphMode.OCONNER) drawTrendLine({ it.oconner }, Color.Gray, 0.5f, 2f)
-
-        // 4. DRAW HERO LINE 🦸‍♂️ (The selected one)
-        val heroExtractor: (OneRepMaxCalculator.Estimates) -> Double = when(selectedMode) {
-            GraphMode.SMART -> { it -> it.smart }
-            GraphMode.EPLEY -> { it -> it.epley }
-            GraphMode.BRZYCKI -> { it -> it.brzycki }
-            GraphMode.LOMBARDI -> { it -> it.lombardi }
-            GraphMode.OCONNER -> { it -> it.oconner }
-            GraphMode.BEST -> { it -> it.best }
+        // --- GHOST LINES (Only for Strength/Formulas) ---
+        if (useFormulas) {
+            val ghostColor = Color.Gray
+            if (selectedMode != GraphMode.EPLEY) drawLineFromPoints({ it.estimates?.epley ?: 0.0 }, ghostColor, 0.3f, 2f)
+            if (selectedMode != GraphMode.BRZYCKI) drawLineFromPoints({ it.estimates?.brzycki ?: 0.0 }, ghostColor, 0.3f, 2f)
+            if (selectedMode != GraphMode.LOMBARDI) drawLineFromPoints({ it.estimates?.lombardi ?: 0.0 }, ghostColor, 0.3f, 2f)
+            if (selectedMode != GraphMode.OCONNER) drawLineFromPoints({ it.estimates?.oconner ?: 0.0 }, ghostColor, 0.3f, 2f)
         }
 
-        drawTrendLine(heroExtractor, heroColor, 1f, 5.dp.toPx()) // Thicker!
+        // --- HERO LINE ---
+        drawLineFromPoints({ it.value }, lineColor, 1f, 6.dp.toPx())
 
-        // Draw Dots for Hero Line
-        data.forEach { point ->
+        // --- HERO DOTS ---
+        dataPoints.forEach { point ->
             drawCircle(
-                color = heroColor,
+                color = lineColor,
                 radius = 4.dp.toPx(),
-                center = Offset(getX(point.date), getY(heroExtractor(point.estimates)))
+                center = Offset(getX(point.date), getY(point.value))
             )
         }
     }

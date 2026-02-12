@@ -41,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.dravenmiller.swolescroll.model.ExerciseType
 import com.dravenmiller.swolescroll.ui.components.GraphMode
 import com.dravenmiller.swolescroll.ui.components.OneRepMaxGraph // 👈 Don't forget this import!
 import java.text.SimpleDateFormat
@@ -110,40 +111,54 @@ fun ExerciseHistoryScreen(
                                 elevation = CardDefaults.cardElevation(2.dp)
                             ) {
                                 Column(modifier = Modifier.padding(16.dp)) {
+                                    val isCardio = remember(graphPoints) {
+                                        val type = graphPoints.firstOrNull()?.exercise?.type
+                                        type?.isCardio == true || type == ExerciseType.LoadedCarry
+                                    }
+
+                                    val titleText = when {
+                                        isCardio && graphPoints.firstOrNull()?.exercise?.type == ExerciseType.LoadedCarry -> "Volume Trend (Lbs × Yds)" // Special Carry Title
+                                        isCardio -> "Performance Trend"
+                                        else -> "Estimated 1RM Trend"
+                                    }
+
                                     Text(
-                                        text = "Estimated 1RM Trend",
+                                        text = titleText,
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.primary
                                     )
                                     Spacer(modifier = Modifier.height(16.dp))
 
-                                    // THE TOGGLE CHIPS
-                                    ScrollableTabRow(
-                                        selectedTabIndex = graphMode.ordinal,
-                                        edgePadding = 0.dp,
-                                        containerColor = Color.Transparent,
-                                        indicator = { /* Optional: Hide indicator if using chips */ },
-                                        divider = {}
-                                    ) {
-                                        GraphMode.values().forEach { mode ->
-                                            val isSelected = graphMode == mode
-                                            FilterChip(
-                                                selected = isSelected,
-                                                onClick = { graphMode = mode },
-                                                label = { Text(mode.name) },
-                                                modifier = Modifier.padding(horizontal = 4.dp),
-                                                colors = FilterChipDefaults.filterChipColors(
-                                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer
+                                    // 👇 FIX: ONLY SHOW CHIPS IF IT IS *NOT* CARDIO
+                                    if (!isCardio) {
+                                        ScrollableTabRow(
+                                            selectedTabIndex = graphMode.ordinal,
+                                            edgePadding = 0.dp,
+                                            containerColor = Color.Transparent,
+                                            indicator = { /* Optional: Hide indicator if using chips */ },
+                                            divider = {}
+                                        ) {
+                                            GraphMode.values().forEach { mode ->
+                                                val isSelected = graphMode == mode
+                                                FilterChip(
+                                                    selected = isSelected,
+                                                    onClick = { graphMode = mode },
+                                                    label = { Text(mode.name) },
+                                                    modifier = Modifier.padding(horizontal = 4.dp),
+                                                    colors = FilterChipDefaults.filterChipColors(
+                                                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer
+                                                    )
                                                 )
-                                            )
+                                            }
                                         }
+                                        Spacer(modifier = Modifier.height(8.dp))
                                     }
 
                                     Spacer(modifier = Modifier.height(8.dp))
                                     // THE GRAPH
                                     OneRepMaxGraph(
-                                        data = graphPoints,
+                                        history = graphPoints,
                                         selectedMode = graphMode,
                                         modifier = Modifier.fillMaxWidth().height(200.dp)
                                     )

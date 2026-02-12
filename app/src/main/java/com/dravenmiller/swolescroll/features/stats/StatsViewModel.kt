@@ -87,110 +87,121 @@ class StatsViewModel(private val dao: WorkoutDao) : ViewModel() {
 
     private fun calculateStats() {
         viewModelScope.launch {
+            // Collect from DB
             dao.getAllWorkouts().collect { workouts ->
                 val records = mutableListOf<PersonalRecord>()
 
+                // Group all exercises by name
                 val groupedExercises = workouts
                     .flatMap { it.exercises }
                     .groupBy { it.exercise.name }
 
                 groupedExercises.forEach { (name, history) ->
+                    // Determine Type safely
                     val rawType = history.firstOrNull()?.exercise?.type ?: ExerciseType.STRENGTH
-
-                    // 1. Force "Carry" type if name contains keywords (Safety check)
                     val isCarryName = name.contains("Carry", true) || name.contains("Farmer", true)
                     val isStairsName = name.contains("Stair", true) || name.contains("Step", true)
 
                     val effectiveType = if (isCarryName) ExerciseType.LoadedCarry else rawType
 
+                    // Flatten all sets for this exercise
                     val allSets = history.flatMap { it.sets }
 
                     if (allSets.isNotEmpty()) {
-                        when {
-                            // 🏃‍♂️ CARDIO (Treadmill, Bike, Stairs)
-                            effectiveType == ExerciseType.CARDIO -> {
-                                val bestSession = history.maxByOrNull { session ->
-                                    session.sets.sumOf { it.distance ?: 0.0 }
-                                }
 
-                                if (bestSession != null) {
-                                    val totalDist = bestSession.sets.sumOf { it.distance ?: 0.0 }
-                                    val totalSeconds = bestSession.sets.sumOf { it.time ?: 0 }
+                        // 1. CARDIO (Run / Bike / Stairs)
+                        if (effectiveType == ExerciseType.CARDIO) {
 
-                                    // Find "Dominant Level" (Usually weight/speed setting)
-                                    val domGroup = bestSession.sets
-                                        .groupBy { it.weight }
-                                        .maxByOrNull { entry -> entry.value.sumOf { it.time ?: 0 } }
-                                    val domLevel = domGroup?.key ?: 0.0
-
-                                    if (isStairsName) {
-                                        // 🪜 STAIRS LOGIC (Steps & Steps/Min)
-                                        val minutes = totalSeconds / 60.0
-                                        val spm = if (minutes > 0) totalDist / minutes else 0.0
-
-                                        val mainStr = "${totalDist.toInt()} steps"
-                                        val subStr = "${spm.toInt()} steps/min (@ Lvl ${domLevel.toInt()})"
-                                        records.add(PersonalRecord(name, effectiveType, mainStr, subStr))
-                                    } else {
-                                        // 🏃‍♂️ RUNNING LOGIC (Miles & MPH)
-                                        val hours = totalSeconds / 3600.0
-                                        val avgSpeed = if (hours > 0) totalDist / hours else 0.0
-
-                                        val mainStr = String.format("%.2f mi", totalDist)
-                                        val speedStr = String.format("%.2f mph", avgSpeed)
-                                        val subStr = "$speedStr (@ Lvl $domLevel)"
-                                        records.add(PersonalRecord(name, effectiveType, mainStr, subStr))
-                                    }
-                                }
+                            // Find the "Best Session" based on Total Distance
+                            val bestSession = history.maxByOrNull { session ->
+                                session.sets.sumOf { it.distance ?: 0.0 }
                             }
 
-                            // 🚛 LOADED CARRY (Farmer Carries)
-                            effectiveType == ExerciseType.LoadedCarry -> {
-                                val bestSet = allSets.maxWithOrNull(
-                                    compareBy<com.dravenmiller.swolescroll.model.Set> { it.weight }
-                                        .thenBy { it.distance ?: 0.0 }
-                                )
+                            if (bestSession != null) {
+                                val totalDist = bestSession.sets.sumOf { it.distance ?: 0.0 }
+                                val totalSeconds = bestSession.sets.sumOf { it.time ?: 0 }
 
-                                if (bestSet != null) {
-                                    val mainStr = "${bestSet.weight} lbs"
-                                    val subStr = "for ${bestSet.distance ?: 0.0} yds"
+                                // Calculate Averages
+                                val minutes = totalSeconds / 60.0
+                                val hours = totalSeconds / 3600.0
+
+                                // Find "Dominant Level" (The level used for the most time)
+                                val domGroup = bestSession.sets
+                                    .groupBy { it.weight } // Weight field holds Level/Incline
+                                    .maxByOrNull { entry -> entry.value.sumOf { it.time ?: 0 } }
+                                val domLevel = domGroup?.key ?: 0.0
+
+                                if (isStairsName) {
+                                    // 🪜 STAIRS: "1500 stairs" | "85 steps/min (@ Lvl 8)"
+                                    val spm = if (minutes > 0) totalDist / minutes else 0.0
+
+                                    val mainStr = "${totalDist.toInt()} stairs"
+                                    val subStr = "${spm.toInt()} steps/min (@ Lvl ${domLevel.toInt()})"
+
+                                    records.add(PersonalRecord(name, effectiveType, mainStr, subStr))
+                                } else {
+                                    // 🏃 RUNNING/BIKE: "3.10 mi" | "6.50 mph (@ Lvl 2)"
+                                    val avgSpeed = if (hours > 0) totalDist / hours else 0.0
+
+                                    val mainStr = String.format("%.2f mi", totalDist)
+                                    val speedStr = String.format("%.2f mph", avgSpeed)
+
+                                    // Only show Level if it's > 0 (e.g. Incline or Bike Level)
+                                    val subStr = if (domLevel > 0) "$speedStr (@ Lvl ${domLevel.toInt()})" else speedStr
+
                                     records.add(PersonalRecord(name, effectiveType, mainStr, subStr))
                                 }
                             }
+                        }
 
-                            // 🧘 ISOMETRIC
-                            effectiveType == ExerciseType.ISOMETRIC -> {
-                                val bestSet = allSets.maxWithOrNull(
-                                    compareBy<com.dravenmiller.swolescroll.model.Set> { it.weight }
-                                        .thenBy { it.time ?: 0 }
-                                )
-                                if (bestSet != null) {
-                                    val mainStr = "${bestSet.weight} lbs"
-                                    val subStr = "for ${bestSet.timeFormatted()}"
-                                    records.add(PersonalRecord(name, effectiveType, mainStr, subStr))
-                                }
+                        // 2. LOADED CARRY
+                        else if (effectiveType == ExerciseType.LoadedCarry) {
+                            val bestSet = allSets.maxWithOrNull(
+                                compareBy<com.dravenmiller.swolescroll.model.Set> { it.weight }
+                                    .thenBy { it.distance ?: 0.0 }
+                            )
+
+                            if (bestSet != null) {
+                                val mainStr = "${bestSet.weight} lbs"
+                                val subStr = "for ${bestSet.distance ?: 0.0} yds"
+                                records.add(PersonalRecord(name, effectiveType, mainStr, subStr))
                             }
+                        }
 
-                            // 🏋️‍♂️ STRENGTH
-                            else -> {
-                                val bestSet = allSets.maxWithOrNull(
-                                    compareBy<com.dravenmiller.swolescroll.model.Set> { it.weight }
-                                        .thenBy { it.reps }
-                                )
-                                if (bestSet != null) {
-                                    val mainStr = "${bestSet.weight} lbs"
-                                    val subStr = "x ${bestSet.reps}"
-                                    records.add(PersonalRecord(name, effectiveType, mainStr, subStr))
-                                }
+                        // 3. ISOMETRIC
+                        else if (effectiveType == ExerciseType.ISOMETRIC) {
+                            val bestSet = allSets.maxWithOrNull(
+                                compareBy<com.dravenmiller.swolescroll.model.Set> { it.weight }
+                                    .thenBy { it.time ?: 0 }
+                            )
+                            if (bestSet != null) {
+                                val mainStr = "${bestSet.weight} lbs"
+                                val subStr = "for ${bestSet.timeFormatted()}"
+                                records.add(PersonalRecord(name, effectiveType, mainStr, subStr))
+                            }
+                        }
+
+                        // 4. STRENGTH (Default)
+                        else {
+                            val bestSet = allSets.maxWithOrNull(
+                                compareBy<com.dravenmiller.swolescroll.model.Set> { it.weight }
+                                    .thenBy { it.reps }
+                            )
+                            if (bestSet != null) {
+                                val mainStr = "${bestSet.weight} lbs"
+                                val subStr = "x ${bestSet.reps}"
+                                records.add(PersonalRecord(name, effectiveType, mainStr, subStr))
                             }
                         }
                     }
                 }
 
+                // Update State
                 _prList.value = records.sortedBy { it.exerciseName }
             }
         }
     }
+
 }
 
 class StatsViewModelFactory(private val dao: WorkoutDao) : ViewModelProvider.Factory {

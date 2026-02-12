@@ -1,10 +1,12 @@
 package com.dravenmiller.swolescroll
 
+import android.os.Build
 import androidx.compose.runtime.collectAsState
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -14,6 +16,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.dravenmiller.swolescroll.data.AppDatabase
+import com.dravenmiller.swolescroll.data.PrepopulateData
 import com.dravenmiller.swolescroll.features.detail.WorkoutDetailScreen
 import com.dravenmiller.swolescroll.features.detail.WorkoutDetailViewModel
 import com.dravenmiller.swolescroll.features.detail.WorkoutDetailViewModelFactory
@@ -23,6 +27,7 @@ import com.dravenmiller.swolescroll.features.home.HomeViewModelFactory
 import com.dravenmiller.swolescroll.features.logworkout.LogWorkoutScreen
 import com.dravenmiller.swolescroll.features.logworkout.LogWorkoutViewModel
 import com.dravenmiller.swolescroll.features.logworkout.LogWorkoutViewModelFactory
+import com.dravenmiller.swolescroll.features.profile.UserProfileScreen
 import com.dravenmiller.swolescroll.features.stats.ExerciseHistoryScreen
 import com.dravenmiller.swolescroll.features.stats.ExerciseHistoryViewModel
 import com.dravenmiller.swolescroll.features.stats.ExerciseHistoryViewModelFactory
@@ -30,10 +35,16 @@ import com.dravenmiller.swolescroll.features.stats.StatsScreen
 import com.dravenmiller.swolescroll.features.stats.StatsViewModel
 import com.dravenmiller.swolescroll.features.stats.StatsViewModelFactory
 import com.dravenmiller.swolescroll.ui.theme.SwoleScrollTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    @RequiresApi(Build.VERSION_CODES.Q)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val db = AppDatabase.getDatabase(applicationContext)
+
+        syncDatabaseWithDefaults(db) // 👈 Run the magic
         enableEdgeToEdge()
         setContent {
             SwoleScrollApp(application as SwoleScrollApplication) // Pass the Application
@@ -41,6 +52,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.Q)
 @Composable
 fun SwoleScrollApp(app: SwoleScrollApplication) {
     SwoleScrollTheme {
@@ -67,7 +79,8 @@ fun SwoleScrollApp(app: SwoleScrollApplication) {
                         navController.navigate(Screen.Detail.createRoute(workout.id))
                     },
                     onFabClick = { navController.navigate(Screen.LogWorkout.route) },
-                    onStatsClick = { navController.navigate(Screen.Stats.route) }
+                    onStatsClick = { navController.navigate(Screen.Stats.route) },
+                    onNavigateToProfile = { navController.navigate(Screen.UserProfile.route) }
                 )
             }
 
@@ -81,7 +94,7 @@ fun SwoleScrollApp(app: SwoleScrollApplication) {
 
                 val dao = app.database.workoutDao()
                 val viewModel: WorkoutDetailViewModel = viewModel(
-                    factory = WorkoutDetailViewModelFactory(dao, workoutId)
+                    factory = WorkoutDetailViewModelFactory(dao, workoutId, app.database)
                 )
 
                 WorkoutDetailScreen(
@@ -170,6 +183,44 @@ fun SwoleScrollApp(app: SwoleScrollApplication) {
                     viewModel = viewModel,
                     onBackClick = { navController.popBackStack() }
                 )
+            }
+
+            // User Profile Screen
+            composable(route = Screen.UserProfile.route) {
+                UserProfileScreen(
+                    onBackClick = { navController.popBackStack() }
+                )
+            }
+        }
+    }
+}
+
+// Helper function to run the sync
+fun syncDatabaseWithDefaults(db: AppDatabase) {
+    val dao = db.exerciseDao()
+    val defaultList = PrepopulateData.defaultExercises
+
+    // Run in background so we don't freeze the app startup
+    kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+        defaultList.forEach { defaultExercise ->
+
+            // 1. Try to find it by name
+            val existingExercise = dao.getExerciseByName(defaultExercise.name)
+
+            if (existingExercise == null) {
+                // ➕ CASE 1: You don't have it? Add it.
+                dao.insertExercise(defaultExercise)
+            } else {
+                // 🔧 CASE 2: You have it, but the tags are old? Fix it.
+                if (existingExercise.muscleGroup != defaultExercise.muscleGroup ||
+                    existingExercise.type != defaultExercise.type) {
+
+                    val updatedExercise = existingExercise.copy(
+                        muscleGroup = defaultExercise.muscleGroup,
+                        type = defaultExercise.type
+                    )
+                    dao.updateExercise(updatedExercise)
+                }
             }
         }
     }

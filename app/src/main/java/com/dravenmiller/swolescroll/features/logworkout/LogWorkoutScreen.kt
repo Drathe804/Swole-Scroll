@@ -8,6 +8,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,16 +19,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Castle
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -58,20 +65,26 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.dravenmiller.swolescroll.model.ExerciseType
 import com.dravenmiller.swolescroll.model.Set
 import com.dravenmiller.swolescroll.model.WorkoutExercise
 import com.dravenmiller.swolescroll.ui.components.EditExerciseItem
 import com.dravenmiller.swolescroll.ui.components.SwoleButton
+import com.dravenmiller.swolescroll.ui.dialogs.ExerciseSelectionDialog
+import com.dravenmiller.swolescroll.util.BodyweightMath
+import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.Map.entry
+import java.util.UUID
 
 @RequiresApi(Build.VERSION_CODES.Q)
 @OptIn(ExperimentalMaterial3Api::class)
@@ -98,6 +111,8 @@ fun LogWorkoutScreen(
     var showDistanceDialog by remember { mutableStateOf(false) }
     var exerciseIdForDistance by remember { mutableStateOf("") }
     var tempTotalDistance by remember { mutableStateOf("") }
+    val userWeight by viewModel.userBodyWeight.collectAsState()
+    val freshnessMap by viewModel.exerciseFreshnessMap.collectAsState()
 
     var isEditingTitle by remember { mutableStateOf(false) }
     var exerciseToDelete by remember { mutableStateOf<WorkoutExercise?>(null) }
@@ -106,14 +121,19 @@ fun LogWorkoutScreen(
         viewModel.addedExercises.sumOf { workoutExercise ->
             workoutExercise.sets.sumOf { set ->
                 val multiplier = if (workoutExercise.exercise.isSingleSide) 2 else 1
-                val w = set.weight
+                val bwPercentage = BodyweightMath.getMultiplier(workoutExercise.exercise.name)
+                val w = if (workoutExercise.exercise.isBodyweight) {
+                    (userWeight * bwPercentage) + set.weight
+                } else {
+                    set.weight
+                }
                 val d = set.distance ?: 0.0
                 val t = set.time ?: 0
                 val safeType = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
 
                 when (safeType) {
                     ExerciseType.STRENGTH -> (w * set.reps * multiplier).toInt()
-                    ExerciseType.ISOMETRIC -> (w * t * multiplier).toInt()
+                    ExerciseType.ISOMETRIC -> 0
                     ExerciseType.LoadedCarry -> (w * d * multiplier).toInt()
                     ExerciseType.TWENTY_ONES -> {
                         val rawVol = (w * set.reps * multiplier)
@@ -126,11 +146,8 @@ fun LogWorkoutScreen(
         }
     }
 
-    LaunchedEffect(addedExercises.size) {
-        if (addedExercises.isNotEmpty()) {
-            expandedIndex = addedExercises.lastIndex
-        }
-    }
+    val listState = rememberLazyListState()
+
 
     LaunchedEffect(viewModel.addedExercises.toList(), viewModel.workoutName.value, viewModel.workoutNote.value) {
         viewModel.autoSaveDraft()
@@ -139,24 +156,56 @@ fun LogWorkoutScreen(
     if (viewModel.showDialog.value) {
         ExerciseSelectionDialog(
             knownExercises = knownExercises,
-            onDismiss = { viewModel.showDialog.value = false },
+            exerciseHistory = freshnessMap,
+            onDismiss = {
+                viewModel.showDialog.value = false
+                viewModel.activeDungeonId = null
+            },
             onExerciseSelected = { exercise ->
                 val initialSet = Set(
-                    id = java.util.UUID.randomUUID().toString(),
+                    id = UUID.randomUUID().toString(),
                     weight = 0.0,
                     reps = 0,
                     distance = 0.0,
                     time = 0
                 )
-                val newEntry = WorkoutExercise(exercise = exercise, sets = listOf(initialSet))
-                viewModel.addedExercises.add(newEntry)
-                viewModel.showDialog.value = false
+                if (viewModel.activeDungeonId != null) {
+                    // ⚔️ DUNGEON MODE: Add to the specific group
+                    val newEntry = WorkoutExercise(
+                        id = UUID.randomUUID().toString(),
+                        exercise = exercise,
+                        sets = listOf(initialSet),
+                        supersetId = viewModel.activeDungeonId // 👈 TAG THE MINION
+                    )
+
+                    // Insert it right after the current focus
+                    viewModel.addedExercises.add(expandedIndex + 1, newEntry)
+
+                    // Move focus to the new guy
+                    expandedIndex++
+                    viewModel.showDialog.value = false
+
+                    // Reset ID (or keep it if you want to add multiple minions)
+                    viewModel.activeDungeonId = null
+                } else {
+                    val newEntry = WorkoutExercise(exercise = exercise, sets = listOf(initialSet))
+                    viewModel.addedExercises.add(newEntry)
+                    // Explicitly Focus the NEW item (which is now at the end)
+                    expandedIndex = viewModel.addedExercises.lastIndex
+                    viewModel.showDialog.value = false
+                }
             },
             onUpdateExercise = { updatedExercise ->
                 viewModel.updateExercise(updatedExercise)
             },
-            onCreateNewExercise = { name, muscle, isSingleSide, ExerciseType ->
-                viewModel.addExerciseSafe(name, muscle, isSingleSide, ExerciseType)
+            onCreateNewExercise = { name, muscle, isSingleSide, type, isBodyweight ->
+                viewModel.addExerciseSafe(
+                    name,
+                    muscle,
+                    isSingleSide,
+                    type,
+                    isBodyweight
+                )
                 viewModel.showDialog.value = false
             }
         )
@@ -236,29 +285,29 @@ fun LogWorkoutScreen(
             }
         )
     }
-        // ... after if (showFinishDialog) { ... } (Line ~180)
+    // ... after if (showFinishDialog) { ... } (Line ~180)
 
-        // 👇 PASTE THIS HERE
-        if (showDeleteConfirmation) {
-            AlertDialog(
-                onDismissRequest = { showDeleteConfirmation = false },
-                title = { Text("Delete Workout?") },
-                text = { Text("This action cannot be undone. Are you sure?") },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            // We reuse onSaveFinished to exit the screen after deleting
-                            viewModel.deleteCurrentWorkout(onDeleted = onSaveFinished)
-                            showDeleteConfirmation = false
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                    ) { Text("Delete") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showDeleteConfirmation = false }) { Text("Cancel") }
-                }
-            )
-        }
+    // 👇 PASTE THIS HERE
+    if (showDeleteConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmation = false },
+            title = { Text("Delete Workout?") },
+            text = { Text("This action cannot be undone. Are you sure?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        // We reuse onSaveFinished to exit the screen after deleting
+                        viewModel.deleteCurrentWorkout(onDeleted = onSaveFinished)
+                        showDeleteConfirmation = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmation = false }) { Text("Cancel") }
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -365,10 +414,42 @@ fun LogWorkoutScreen(
                                 Icon(Icons.Default.Star, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "Session Volume: ${java.text.NumberFormat.getIntegerInstance().format(currentSessionVolume)} lbs",
+                                    text = "Session Volume: ${NumberFormat.getIntegerInstance().format(currentSessionVolume)} lbs",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+                    }
+
+                    // Check if it's a quest AND has instructions
+                    if (viewModel.isQuest.value && viewModel.workoutNote.value.isNotBlank()) {
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.tertiaryContainer, // Distinct "Quest" color
+                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 16.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.AutoAwesome, contentDescription = null) // ⚔️ or ✨
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = "Mission Briefing",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = viewModel.workoutNote.value,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontStyle = FontStyle.Italic
                                 )
                             }
                         }
@@ -397,23 +478,8 @@ fun LogWorkoutScreen(
                                 }
                             }
                         )
-                    } else {
-                        val smartName = when {
-                            viewModel.workoutName.value.isNotBlank() -> viewModel.workoutName.value
-                            viewModel.addedExercises.isNotEmpty() -> "${viewModel.addedExercises.first().exercise.muscleGroup} Day"
-                            else -> "Tap to name workout"
-                        }
-                        Text(
-                            text = smartName,
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { isEditingTitle = true }
-                                .padding(vertical = 8.dp)
-                        )
                     }
+
 
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(text = "Exercises", style = MaterialTheme.typography.titleMedium)
@@ -421,6 +487,7 @@ fun LogWorkoutScreen(
             }
 
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
@@ -434,6 +501,7 @@ fun LogWorkoutScreen(
                             val thisPr = prMapState.value[workoutExercise.exercise.name]
                             val thisHistory = historyMapState.value[workoutExercise.exercise.name] ?: emptyList()
                             val type = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
+                            val isDungeon = workoutExercise.supersetId != null
 
                             // 1. GET HISTORY (Parse Weight AND Reps) 🕵️‍♂️
                             val historyPrString = prMapState.value[workoutExercise.exercise.name]
@@ -522,9 +590,9 @@ fun LogWorkoutScreen(
                                         val historyD = historyPrString?.substringAfter("for ")?.split(" ")?.firstOrNull()?.toDoubleOrNull() ?: 0.0
 
                                         if (currentD > 0){
-                                        val isHeavier = currentW > historyW
-                                        val isFurther = (currentW == historyW) && (currentW > 0) && (currentD > historyD)
-                                        isHeavier || isFurther
+                                            val isHeavier = currentW > historyW
+                                            val isFurther = (currentW == historyW) && (currentW > 0) && (currentD > historyD)
+                                            isHeavier || isFurther
                                         } else {
                                             false
                                         }
@@ -572,7 +640,7 @@ fun LogWorkoutScreen(
                                 displayPr = "${String.format("%.2f", fixed)} stairs/min"
                             }
 
-                                if (isNewRecord) {
+                            if (isNewRecord) {
                                 displayPr = when (type){
                                     ExerciseType.CARDIO -> {
                                         val totalDist = workoutExercise.sets.sumOf { it.distance ?: 0.0 }
@@ -602,84 +670,134 @@ fun LogWorkoutScreen(
 
 
                             Column(modifier = Modifier.animateContentSize()) {
-                                EditExerciseItem(
-                                    workoutExercise = workoutExercise,
-                                    isExpanded = expandedIndex == index,
-                                    personalRecord = displayPr,
-                                    isNewPr = isNewRecord,
-                                    pastNotes = thisHistory,
-                                    onDelete = {
-                                        if (workoutExercise.sets.isEmpty()){
-                                            viewModel.addedExercises.remove(workoutExercise)
-                                        } else {
-                                            exerciseToDelete = workoutExercise
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        // Darker color for Dungeon, Standard for Normal
+                                        containerColor = if (isDungeon) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface
+                                    ),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.padding(vertical = 4.dp)
+                                ) {
+                                    Column {
+                                        // Optional: A little header to show they are linked
+                                        if (isDungeon) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth()
+                                                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Link,
+                                                    contentDescription = "Linked",
+                                                    modifier = Modifier.size(12.dp),
+                                                    tint = MaterialTheme.colorScheme.secondary
+                                                )
+                                                Spacer(Modifier.width(4.dp))
+                                                Text(
+                                                    "Mini-Dungeon",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.secondary
+                                                )
+                                            }
                                         }
-                                    },
-                                    onInfoClick = {
-                                        viewModel.loadHistory(workoutExercise.exercise.id, workoutExercise.exercise.name)
-                                        viewModel.showHistoryDialog.value = true
-                                    },
-                                    onHeaderClick = {
-                                        expandedIndex = if (expandedIndex == index) -1 else index
-                                    },
-                                    onAddSet = {
-                                        val newSet = Set(weight = 0.0, reps = 0)
-                                        val updatedExercise = workoutExercise.copy(sets = workoutExercise.sets + newSet)
-                                        viewModel.addedExercises[index] = updatedExercise
-                                    },
-                                    onUpdateSet = { setIndex, updatedSet ->
-                                        val updatedSets = workoutExercise.sets.toMutableList()
-                                        updatedSets[setIndex] = updatedSet
-                                        val updatedExercise = workoutExercise.copy(sets = updatedSets)
-                                        viewModel.addedExercises[index] = updatedExercise
-                                    },
-                                    onRemoveSet = { setIndex ->
-                                        val updatedSets = workoutExercise.sets.toMutableList()
-                                        updatedSets.removeAt(setIndex)
-                                        val updatedExercise = workoutExercise.copy(sets = updatedSets)
-                                        viewModel.addedExercises[index] = updatedExercise
-                                    },
-                                    onUpdateNote = { newNote ->
-                                        val updatedExercise = workoutExercise.copy(note = newNote)
-                                        viewModel.addedExercises[index] = updatedExercise
-                                    },
-                                    onTreadmillSplit = { seconds, incline, level ->
-                                        // 1. UPDATE THE VIEWMODEL
-                                        viewModel.splitCardioSet(
-                                            exerciseId = workoutExercise.id,
-                                            currentSetIndex = workoutExercise.sets.lastIndex,
-                                            elapsedSeconds = seconds,
-                                            newIncline = incline,
-                                            newLevel = level
+                                        EditExerciseItem(
+                                            workoutExercise = workoutExercise,
+                                            userWeight = userWeight,
+                                            isExpanded = expandedIndex == index,
+                                            personalRecord = displayPr,
+                                            isNewPr = isNewRecord,
+                                            pastNotes = thisHistory,
+                                            onDelete = {
+                                                if (workoutExercise.sets.isEmpty()) {
+                                                    viewModel.addedExercises.remove(workoutExercise)
+                                                    expandedIndex = -1
+                                                } else {
+                                                    exerciseToDelete = workoutExercise
+                                                }
+                                            },
+                                            onInfoClick = {
+                                                viewModel.loadHistory(
+                                                    workoutExercise.exercise.id,
+                                                    workoutExercise.exercise.name
+                                                )
+                                                viewModel.showHistoryDialog.value = true
+                                            },
+                                            onHeaderClick = {
+                                                expandedIndex =
+                                                    if (expandedIndex == index) -1 else index
+                                            },
+                                            onAddSet = {
+                                                val newSet = Set(weight = 0.0, reps = 0)
+                                                val updatedExercise =
+                                                    workoutExercise.copy(sets = workoutExercise.sets + newSet)
+                                                viewModel.addedExercises[index] = updatedExercise
+                                            },
+                                            onUpdateSet = { setIndex, updatedSet ->
+                                                val updatedSets =
+                                                    workoutExercise.sets.toMutableList()
+                                                updatedSets[setIndex] = updatedSet
+                                                val updatedExercise =
+                                                    workoutExercise.copy(sets = updatedSets)
+                                                viewModel.addedExercises[index] = updatedExercise
+                                            },
+                                            onRemoveSet = { setIndex ->
+                                                val updatedSets =
+                                                    workoutExercise.sets.toMutableList()
+                                                updatedSets.removeAt(setIndex)
+                                                val updatedExercise =
+                                                    workoutExercise.copy(sets = updatedSets)
+                                                viewModel.addedExercises[index] = updatedExercise
+                                            },
+                                            onUpdateNote = { newNote ->
+                                                val updatedExercise =
+                                                    workoutExercise.copy(note = newNote)
+                                                viewModel.addedExercises[index] = updatedExercise
+                                            },
+                                            onTreadmillSplit = { seconds, incline, level ->
+                                                // 1. UPDATE THE VIEWMODEL
+                                                viewModel.splitCardioSet(
+                                                    exerciseId = workoutExercise.id,
+                                                    currentSetIndex = workoutExercise.sets.lastIndex,
+                                                    elapsedSeconds = seconds,
+                                                    newIncline = incline,
+                                                    newLevel = level
+                                                )
+
+                                                // 2. CHECK IF WE SHOULD SHOW THE POPUP 🧠
+                                                // Treadmill: incline = Weight (Speed), level = Reps (Inc)
+                                                val isTreadmillCheck =
+                                                    workoutExercise.exercise.name.contains(
+                                                        "Treadmill",
+                                                        ignoreCase = true
+                                                    )
+
+                                                // ✅ FIXED LOGIC HERE:
+                                                // If Treadmill: Stop when Incline (which holds Speed) == 0.0
+                                                // If Bike/Stairs: Stop when Level (which holds Weight) == 0.0 (Wait, level passed here is Int Reps)
+
+                                                // Actually, let's look at what 'incline' and 'level' are passed from EditExerciseItem:
+                                                // EditExerciseItem calls this as: onTreadmillSplit(seconds, primaryValue, secondaryValue)
+                                                // primaryValue = Level (Speed/Weight) -> "incline" arg here
+                                                // secondaryValue = Incline (Reps) -> "level" arg here
+
+                                                // So 'incline' arg IS the Speed (Weight).
+                                                // And 'level' arg IS the Incline (Reps).
+                                                // Confusing naming in the lambda, but the logic should be:
+
+                                                val speedOrLevel =
+                                                    incline // This is the Primary Value (Weight)
+
+                                                // We only stop if Speed drops to 0.
+                                                if (speedOrLevel == 0.0 && workoutExercise.sets.isNotEmpty()) {
+                                                    exerciseIdForDistance = workoutExercise.id
+                                                    tempTotalDistance = ""
+                                                    showDistanceDialog = true
+                                                }
+                                            },
+                                            backgroundColor = if (isDungeon) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface
                                         )
-
-                                        // 2. CHECK IF WE SHOULD SHOW THE POPUP 🧠
-                                        // Treadmill: incline = Weight (Speed), level = Reps (Inc)
-                                        val isTreadmillCheck = workoutExercise.exercise.name.contains("Treadmill", ignoreCase = true)
-
-                                        // ✅ FIXED LOGIC HERE:
-                                        // If Treadmill: Stop when Incline (which holds Speed) == 0.0
-                                        // If Bike/Stairs: Stop when Level (which holds Weight) == 0.0 (Wait, level passed here is Int Reps)
-
-                                        // Actually, let's look at what 'incline' and 'level' are passed from EditExerciseItem:
-                                        // EditExerciseItem calls this as: onTreadmillSplit(seconds, primaryValue, secondaryValue)
-                                        // primaryValue = Level (Speed/Weight) -> "incline" arg here
-                                        // secondaryValue = Incline (Reps) -> "level" arg here
-
-                                        // So 'incline' arg IS the Speed (Weight).
-                                        // And 'level' arg IS the Incline (Reps).
-                                        // Confusing naming in the lambda, but the logic should be:
-
-                                        val speedOrLevel = incline // This is the Primary Value (Weight)
-
-                                        // We only stop if Speed drops to 0.
-                                        if (speedOrLevel == 0.0 && workoutExercise.sets.isNotEmpty()){
-                                            exerciseIdForDistance = workoutExercise.id
-                                            tempTotalDistance = ""
-                                            showDistanceDialog = true
-                                        }
                                     }
-                                )
+                                }
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                         }
@@ -691,11 +809,15 @@ fun LogWorkoutScreen(
 
                 Column {
                     Spacer(modifier = Modifier.height(8.dp))
-                    SwoleButton(text = "Add Exercise", onClick = { viewModel.showDialog.value = true })
+                    SwoleButton(
+                        text = "Add Exercise",
+                        onClick = {
+                            viewModel.activeDungeonId = null
+                            viewModel.showDialog.value = true
+                        })
                     Spacer(modifier = Modifier.height(8.dp))
                     SwoleButton(text = "Finish Workout", onClick = { showFinishDialog = true })
 
-                    // 👇 PASTE THIS HERE (Line ~530)
                     // 🗑️ DELETE BUTTON (Only visible if Editing)
                     if (viewModel.currentWorkoutId != null) {
                         Spacer(modifier = Modifier.height(24.dp))
@@ -715,91 +837,200 @@ fun LogWorkoutScreen(
 
             }
 
-            val isLastItem = expandedIndex == addedExercises.lastIndex
-            // 👇 SMART NAVIGATION ROW
+            // 👇 SMART NAVIGATION & MINI-DUNGEON
             AnimatedVisibility(visible = isFocusMode) {
-                // 1. Calculate the names safely
-                val prevExerciseName = if (expandedIndex > 0) {
-                    addedExercises[expandedIndex - 1].exercise.name
-                } else null
+                // 1. Wrap in Column so Dungeon Button sits ABOVE Navigation
+                Column {
 
-                val nextExerciseName = if (expandedIndex < addedExercises.lastIndex) {
-                    addedExercises[expandedIndex + 1].exercise.name
-                } else "Add New"
+                    // --- SAFETY CHECKS (Fixes the Crash) ---
+                    // We use getOrNull so if index is -1 (during animation), it returns null instead of crashing
+                    val currentExercise = addedExercises.getOrNull(expandedIndex)
+                    val currentDungeonId = currentExercise?.supersetId
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 12.dp, start = 4.dp, end = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // ⬅️ PREV BUTTON (Outlined)
-                    androidx.compose.material3.OutlinedButton(
-                        onClick = {
-                            if (expandedIndex > 0) {
-                                val target = expandedIndex - 1
-                                viewModel.prepareForSuperset(target)
-                                expandedIndex = target
+                    // Check if the NEXT exercise is already a superset (so we don't double add)
+                    val hasNeighbor = if (expandedIndex + 1 < addedExercises.size) {
+                        addedExercises[expandedIndex + 1].supersetId == currentDungeonId && currentDungeonId != null
+                    } else false
+
+                    // --- ⚔️ MINI-DUNGEON CONTROLS ---
+                    if (currentExercise != null && !hasNeighbor) {
+                        Column(modifier = Modifier.padding(bottom = 16.dp)) {
+
+                            // BUTTON 1: EXTEND / CONVERT (The main action)
+                            Card(
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                    ),
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    if (currentDungeonId != null) {
+                                        // 🔗 EXTEND: Add another minion to THIS dungeon
+                                        viewModel.activeDungeonId = currentDungeonId
+                                        viewModel.showDialog.value = true
+                                    } else {
+                                        // 👑 CONVERT: Turn this Normal card into a Boss
+                                        viewModel.startDungeon(expandedIndex)
+                                    }
+                                }
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(
+                                        Icons.Default.Castle,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = if (currentDungeonId == null) "Enter Mini-Dungeon (Create Superset)" else "New Encounter (Add to Superset)",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
-                        },
-                        enabled = expandedIndex > 0,
-                        modifier = Modifier.weight(1f), // Share width
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.KeyboardArrowUp, contentDescription = null, modifier = Modifier.size(20.dp))
-                            if (prevExerciseName != null) {
-                                Text(
-                                    text = prevExerciseName,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+
+                            // BUTTON 2: BREAK CHAIN (Only show if we are already inside a dungeon)
+                            if (currentDungeonId != null) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedButton(
+                                    onClick = { viewModel.startNewDungeon_Fresh() }, // 👈 Requires the new VM function below
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.primary
+                                    )
+                                ) {
+                                    Icon(Icons.Default.Castle, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("New Mini-Dungeon (Separate Superset)")
+                                }
                             }
                         }
                     }
 
-                    // ❌ DONE (Small Middle Button)
-                    androidx.compose.material3.TextButton(
-                        onClick = { expandedIndex = -1 },
-                        modifier = Modifier.width(60.dp) // Fixed width to save room for names
-                    ) {
-                        Text("Done", style = MaterialTheme.typography.labelMedium)
-                    }
 
-                    // ➡️ NEXT BUTTON (Filled & Prominent)
-                    androidx.compose.material3.Button(
-                        onClick = {
-                            if (isLastItem) {
-                                viewModel.showDialog.value = true
-                            } else {
-                                val target = expandedIndex + 1
-                                viewModel.prepareForSuperset(target)
-                                expandedIndex = target
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+                    // 1. Calculate Names
+                    val prevExerciseName = if (expandedIndex > 0) {
+                        addedExercises[expandedIndex - 1].exercise.name
+                    } else null
+
+                    val nextExerciseName = if (expandedIndex < addedExercises.lastIndex) {
+                        addedExercises[expandedIndex + 1].exercise.name
+                    } else "Add New"
+
+                    // 2. Check End of Dungeon Logic
+                    val isEndOfDungeon = if (currentDungeonId != null) {
+                        val nextIndex = expandedIndex + 1
+                        nextIndex >= addedExercises.size || addedExercises[nextIndex].supersetId != currentDungeonId
+                    } else false
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp, start = 4.dp, end = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(
-                                if (isLastItem) Icons.Default.Add else Icons.Default.KeyboardArrowDown,
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Text(
-                                text = nextExerciseName,
-                                style = MaterialTheme.typography.labelSmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                        // ⬅️ PREV BUTTON
+                        OutlinedButton(
+                            onClick = {
+                                if (expandedIndex > 0) {
+                                    val target = expandedIndex - 1
+                                    viewModel.prepareForSuperset(target)
+                                    expandedIndex = target
+                                }
+                            },
+                            enabled = expandedIndex > 0,
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(Icons.Default.KeyboardArrowUp, contentDescription = null, modifier = Modifier.size(20.dp))
+                                if (prevExerciseName != null) {
+                                    Text(
+                                        text = prevExerciseName,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+
+                        // ➡️ NEXT / LOOP BUTTONS
+                        if (isEndOfDungeon) {
+                            // 🚪 ESCAPE
+                            OutlinedButton(
+                                onClick = {
+                                    if (expandedIndex + 1 < addedExercises.size) {
+                                        expandedIndex++
+                                    } else {
+                                        viewModel.showDialog.value = true
+                                    }
+                                },
+                                modifier = Modifier.weight(0.8f)
+                            ) {
+                                Text("Escape", maxLines = 1, fontSize = 10.sp)
+                            }
+
+                            Spacer(Modifier.width(8.dp))
+
+                            // 🔄 LOOP
+                            Button(
+                                onClick = {
+                                    val startOfDungeon = addedExercises.indexOfFirst { it.supersetId == currentDungeonId }
+                                    if (startOfDungeon != -1) {
+                                        viewModel.prepareForSuperset(startOfDungeon)
+                                        expandedIndex = startOfDungeon
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Superset")
+                            }
+
+                        } else {
+                            // STANDARD NEXT
+                            Button(
+                                onClick = {
+                                    if (expandedIndex < addedExercises.lastIndex) {
+                                        val target = expandedIndex + 1
+                                        viewModel.prepareForSuperset(target)
+                                        expandedIndex = target
+                                    } else {
+                                        viewModel.showDialog.value = true
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 8.dp),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        if (expandedIndex == addedExercises.lastIndex) Icons.Default.Add else Icons.Default.KeyboardArrowDown,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Text(
+                                        text = nextExerciseName,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
+
 
 
             if (viewModel.showHistoryDialog.value) {
@@ -819,6 +1050,7 @@ fun LogWorkoutScreen(
                         TextButton(onClick = {
                             viewModel.addedExercises.remove(exerciseToDelete)
                             exerciseToDelete = null
+                            expandedIndex = -1
                         }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
                     },
                     dismissButton = {

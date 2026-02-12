@@ -16,8 +16,8 @@ android {
         applicationId = "com.dravenmiller.swolescroll"
         minSdk = 24
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.2"
+        versionCode = 13
+        versionName = "1.3.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -31,6 +31,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,7 +42,9 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.dravenmiller.swolescroll.data.AppDatabase
 import com.dravenmiller.swolescroll.model.ExerciseType
+import com.dravenmiller.swolescroll.model.calculateTotalVolume
 import com.dravenmiller.swolescroll.ui.components.DetailExerciseItem
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -52,33 +55,18 @@ import java.util.Locale
 fun WorkoutDetailScreen(
     viewModel: WorkoutDetailViewModel,
     onBackClick: () -> Unit,
-    onEditClick: (String) -> Unit // New Edit Callback
+    onEditClick: (String) -> Unit
 ) {
     val workout = viewModel.workout.value
     var isEditingTitle by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    val userWeight by viewModel.userWeight.collectAsState(initial = 0.0)
 
-    // 1. RESTORED VOLUME CALCULATION
-    val totalWorkoutVolume = remember(workout?.exercises) {
+
+    val totalWorkoutVolume = remember(workout?.exercises, userWeight) {
         workout?.exercises?.sumOf { workoutExercise ->
-            workoutExercise.sets.sumOf { set ->
-                val multiplier = if (workoutExercise.exercise.isSingleSide) 2 else 1
-                val w = set.weight
-                val d = set.distance ?: 0.0
-                val t = set.time ?: 0
-                val safeType = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
-
-                when (safeType) {
-                    ExerciseType.STRENGTH -> (w * set.reps * multiplier).toInt()
-                    ExerciseType.ISOMETRIC -> (w * t * multiplier).toInt()
-                    ExerciseType.LoadedCarry -> (w * d * multiplier).toInt()
-                    ExerciseType.TWENTY_ONES -> {
-                        val rawVol = (w * set.reps * multiplier)
-                        ((rawVol * 2)/3).toInt()
-                    }
-                    else -> 0
-                }
-            }
+            // Use the helper function we created in WorkoutExercise.kt
+            workoutExercise.calculateTotalVolume(userWeight)
         } ?: 0
     }
 
@@ -215,7 +203,11 @@ fun WorkoutDetailScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(workout.exercises) { workoutExercise ->
-                        DetailExerciseItem(workoutExercise = workoutExercise)
+                        val vol = workoutExercise.calculateTotalVolume(userWeight)
+                        DetailExerciseItem(
+                            workoutExercise = workoutExercise,
+                            userWeight = userWeight
+                        )
                     }
                 }
             }
