@@ -348,23 +348,80 @@ class LogWorkoutViewModel(
 
     fun updateExercise(updatedExercise: Exercise) {
         viewModelScope.launch {
-            // 1. Find the ORIGINAL version of this exercise to see what the old name was
-            val existingExercise = exerciseList.value.find { it.id == updatedExercise.id }
+            val oldId = updatedExercise.id
+            val cleanName = updatedExercise.name.trim()
 
-            if (existingExercise != null && existingExercise.name != updatedExercise.name) {
-                // 🚨 NAME CHANGED! 🚨
-                // Trigger the History Migrator to fix past logs
-                renameExercise(oldName = existingExercise.name, newName = updatedExercise.name)
+            // 1. Check if the name we are trying to use ALREADY EXISTS (and isn't us)
+            val existingTarget = db.exerciseDao().getExerciseByName(cleanName)
 
-                // Also ensure muscle/type updates happen
-                db.exerciseDao().updateExercise(updatedExercise)
+            if (existingTarget != null && existingTarget.id != oldId) {
+                // 🚨 MERGE DETECTED: We are renaming "A" to "B", but "B" already exists.
+                // Action: Move all history from A to B, then Delete A.
+
+                Log.d("UpdateExercise", "Merging '${updatedExercise.name}' into existing '${existingTarget.name}'")
+
+                // A. Update History: Find all workouts using the Old Exercise
+                val allWorkouts = db.workoutDao().getAllWorkoutsList()
+
+                allWorkouts.forEach { workout ->
+                    // Check if this workout contains the exercise we are deleting
+                    val hasOldExercise = workout.exercises.any { it.exercise.id == oldId }
+
+                    if (hasOldExercise) {
+                        val fixedExercises = workout.exercises.map { we ->
+                            if (we.exercise.id == oldId) {
+                                // SWAP: Replace the old exercise object with the Target exercise object
+                                // We keep the 'type' from the log in case it was specific (like Cardio vs Strength)
+                                we.copy(exercise = existingTarget.copy(type = we.exercise.type))
+                            } else {
+                                we
+                            }
+                        }
+                        // Save the corrected workout
+                        db.workoutDao().updateWorkout(workout.copy(exercises = fixedExercises))
+                    }
+                }
+
+                // B. Delete the "Old" entry since it is now merged
+                // We use the ID to ensure we delete the specific row that was being edited
+                val exerciseToDelete = exerciseList.value.find { it.id == oldId }
+                if (exerciseToDelete != null) {
+                    db.exerciseDao().deleteExercise(exerciseToDelete)
+                }
+
             } else {
-                // 💤 NAME IS THE SAME
-                // Just update the muscle group or type in the master list
+                // ✏️ NORMAL RENAME: The name is unique. Just update the text.
+
+                // 1. Update the Master Entry in the DB
                 db.exerciseDao().updateExercise(updatedExercise)
+
+                // 2. Update History (because workouts store a copy of the name)
+                // We need to make sure past logs reflect the new name immediately.
+                val allWorkouts = db.workoutDao().getAllWorkoutsList()
+
+                allWorkouts.forEach { workout ->
+                    // Check by ID is safer than checking by Name
+                    val hasTarget = workout.exercises.any { it.exercise.id == oldId }
+
+                    if (hasTarget) {
+                        val updatedList = workout.exercises.map { we ->
+                            if (we.exercise.id == oldId) {
+                                // Update the embedded exercise object with the new info
+                                we.copy(exercise = updatedExercise)
+                            } else {
+                                we
+                            }
+                        }
+                        db.workoutDao().updateWorkout(workout.copy(exercises = updatedList))
+                    }
+                }
             }
+
+            // Refresh freshness map to reflect changes immediately
+            loadFreshnessHistory()
         }
     }
+
 
     // ---------------------------------------------------------
     // ✅ FIXED: EDITING & SAVING LOGIC (Uses 'db' correctly)

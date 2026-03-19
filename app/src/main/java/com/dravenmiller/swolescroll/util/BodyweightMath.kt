@@ -30,8 +30,8 @@ object BodyweightMath {
             name.contains("jump") -> 1.0
 
             // 🐢 CORE (Variable, but usually treated as bodyweight load)
-            name.contains("crunch") -> 0.0 // Usually negligible for "tonnage"
-            name.contains("sit-up") || name.contains("sit up") -> 0.0
+            name.contains("crunch") -> 0.15 // Usually negligible for "tonnage"
+            name.contains("sit-up") || name.contains("sit up") -> 0.1
             name.contains("leg raise") -> 0.30 // Leg weight ~30% of body
 
             // Default for any other exercise marked "isBodyweight"
