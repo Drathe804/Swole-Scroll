@@ -26,12 +26,15 @@ import com.dravenmiller.swolescroll.model.ExerciseType
 import com.dravenmiller.swolescroll.model.Set
 import com.dravenmiller.swolescroll.model.WorkoutExercise
 import com.dravenmiller.swolescroll.util.BodyweightMath
+import com.dravenmiller.swolescroll.util.MonsterRoster
 import kotlinx.coroutines.delay
 
 @Composable
 fun EditExerciseItem(
     workoutExercise: WorkoutExercise,
     userWeight: Double = 0.0,
+    monsterHp: Int = 2000,
+    isSiegeModeEnabled: Boolean = true,
     isExpanded: Boolean,
     personalRecord: String?,
     isNewPr: Boolean,
@@ -161,11 +164,69 @@ fun EditExerciseItem(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(text = workoutExercise.exercise.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    if (currentVolume > 0) {
-                        Text(text = "Vol: ${java.text.NumberFormat.getIntegerInstance().format(currentVolume)} lbs", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+
+                    if (isSiegeModeEnabled && !safeType.isCardio) {
+                        // ⚔️ DEFEND THE KINGDOM - MONSTER HP BAR ⚔️
+                        val selectedMonsterImage = com.dravenmiller.swolescroll.util.MonsterRoster.getMonsterFromHorde(
+                            muscleGroup = workoutExercise.exercise.muscleGroup,
+                            exerciseName = workoutExercise.exercise.name
+                        )
+
+                        val finalMonsterHp = if (monsterHp > 0) monsterHp else 2000
+                        val remainingHp = (finalMonsterHp - currentVolume).coerceAtLeast(0)
+                        val hpPercentage = (remainingHp.toFloat() / finalMonsterHp.toFloat()).coerceIn(0f, 1f)
+                        val isSlain = remainingHp == 0 && currentVolume > 0
+                        val isCrit = isSlain && currentVolume > finalMonsterHp
+
+                        Spacer(Modifier.height(6.dp))
+
+                        Row(modifier = Modifier.fillMaxWidth(0.9f), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                androidx.compose.foundation.Image(
+                                    painter = androidx.compose.ui.res.painterResource(id = selectedMonsterImage),
+                                    contentDescription = "Enemy Monster",
+                                    modifier = Modifier.size(32.dp).padding(end = 8.dp)
+                                )
+                                Text(
+                                    text = if (isCrit) "💥 CRITICAL HIT!" else if (isSlain) "☠️ MONSTER SLAIN!" else "Monster HP",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (isCrit) Color(0xFFFFB300) else if (isSlain) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                                )
+                            }
+                            Text("$remainingHp / $finalMonsterHp", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+
+                        LinearProgressIndicator(
+                            progress = { hpPercentage },
+                            modifier = Modifier.fillMaxWidth(0.9f).height(8.dp).padding(vertical = 2.dp),
+                            color = MaterialTheme.colorScheme.error,
+                            trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
+                            strokeCap = androidx.compose.ui.graphics.StrokeCap.Round
+                        )
+
+                        Row(modifier = Modifier.fillMaxWidth(0.9f).padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("⚔️ Damage: ${java.text.NumberFormat.getIntegerInstance().format(currentVolume)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                            if (safeType == ExerciseType.ISOMETRIC) {
+                                val totalSeconds = workoutExercise.sets.sumOf { it.time ?: 0 }
+                                if (totalSeconds > 0) Text("TUT: ${String.format("%d:%02d", totalSeconds / 60, totalSeconds % 60)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                            }
+                        }
+                    } else {
+                        // 📊 STANDARD UI MODE 📊
+                        if (safeType == ExerciseType.ISOMETRIC) {
+                            val totalSeconds = workoutExercise.sets.sumOf { it.time ?: 0 }
+                            if (totalSeconds > 0) {
+                                Text("TUT: ${String.format("%d:%02d", totalSeconds / 60, totalSeconds % 60)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            }
+                        } else if (currentVolume > 0) {
+                            Text("Vol: ${java.text.NumberFormat.getIntegerInstance().format(currentVolume)} lbs", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        }
                     }
 
-                    // ... (PR Logic kept mostly same, small tweak for Cardio check) ...
+                    // ... PR Logic stays the same below this!
+
+                    // 🏆 PR LOGIC
                     if (personalRecord != null) {
                         if(isNewPr) {
                             Text(
@@ -199,7 +260,8 @@ fun EditExerciseItem(
                             }
                             Text(text = "PR: $prText", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.SemiBold)
                         }
-                    }
+
+            }
                 }
                 // ... (Icons keep same) ...
                 Column {

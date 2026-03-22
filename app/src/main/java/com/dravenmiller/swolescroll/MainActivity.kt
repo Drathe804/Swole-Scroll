@@ -63,14 +63,13 @@ fun SwoleScrollApp(app: SwoleScrollApplication) {
             // ROUTE 1: HOME (Still using Mock Data for now - we will fix this next!)
             composable(Screen.Home.route) {
                 // Get the Viewmodel
-                val dao = app.database.workoutDao()
+                app.database.workoutDao()
                 val viewModel: HomeViewModel = viewModel(
                     factory = HomeViewModelFactory(app, app.database)
                 )
 
                 // Collect the Live Data
                 // "collectAsState" turns the Stream into a List we can use
-                val workouts by viewModel.workouts.collectAsState(initial = emptyList())
 
                 // Pass the workouts to the screen
                 HomeScreen(
@@ -87,7 +86,7 @@ fun SwoleScrollApp(app: SwoleScrollApplication) {
             // Detail Route
             composable(
                 Screen.Detail.route,
-                arguments = listOf(androidx.navigation.navArgument("workoutId") { type = androidx.navigation.NavType.StringType })
+                arguments = listOf(navArgument("workoutId") { type = NavType.StringType })
                 ) { backStackEntry ->
                 // Get the Workout ID
                 val workoutId = backStackEntry.arguments?.getString("workoutId") ?: return@composable

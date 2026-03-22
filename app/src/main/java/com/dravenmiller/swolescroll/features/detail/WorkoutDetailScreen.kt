@@ -203,7 +203,7 @@ fun WorkoutDetailScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(workout.exercises) { workoutExercise ->
-                        val vol = workoutExercise.calculateTotalVolume(userWeight)
+                        workoutExercise.calculateTotalVolume(userWeight)
                         DetailExerciseItem(
                             workoutExercise = workoutExercise,
                             userWeight = userWeight

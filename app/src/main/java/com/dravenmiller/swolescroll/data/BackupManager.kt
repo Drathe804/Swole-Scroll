@@ -37,7 +37,7 @@ object BackupManager {
                 put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
 
                 // 🛡️ API CHECK: Only use RELATIVE_PATH on Android 10+ (API 29)
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
                 }
             }

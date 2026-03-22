@@ -44,7 +44,7 @@ fun WorkoutExercise.calculateTotalVolume(userWeight: Double): Int {
         }
 
         val d = set.distance ?: 0.0
-        val t = set.time ?: 0
+        set.time ?: 0
         val safeType = exercise.type ?: ExerciseType.STRENGTH
 
         when (safeType) {

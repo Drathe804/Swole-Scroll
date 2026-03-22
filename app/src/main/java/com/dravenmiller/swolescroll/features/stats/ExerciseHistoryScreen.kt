@@ -197,7 +197,6 @@ fun ExerciseHistoryScreen(
     }
 }
 
-// ... (HistoryCard and NoteCard functions remain exactly the same as you had them)
 @Composable
 fun HistoryCard(
     entry: HistoryEntry,
@@ -224,18 +223,20 @@ fun HistoryCard(
                 )
             }
 
-            // 🧠 INTELLIGENT EXERCISE TYPE DETECTION
+            // 🧠 1. SMART TYPE DETECTION
             val isCarry = exerciseName.contains("Carry", true) ||
                     exerciseName.contains("Farmer", true) ||
                     exerciseName.contains("Yoke", true)
 
-            // It's "Cardio" only if it has distance/time AND IS NOT A CARRY
-            val hasDistance = entry.sets.any { (it.distance ?: 0.0) > 0.0 }
-            val isCardioLikely = !isCarry && hasDistance && entry.sets.any { it.time > 0 }
+            val isStairs = exerciseName.contains("Stair", true)
+            val isTreadmill = exerciseName.contains("Treadmill", true)
+            val isBike = exerciseName.contains("Bike", true) || exerciseName.contains("Elliptical", true)
+
+            // It is Cardio if it matches any of these keywords
+            val isCardio = isStairs || isTreadmill || isBike || exerciseName.contains("Run", true)
 
             // --- HEADER SUMMARY ---
             if (isCarry) {
-                // 🚛 CARRY SUMMARY (Max Weight & Total Distance)
                 val bestSet = entry.sets.maxByOrNull { it.weight }
                 val maxWeight = bestSet?.weight ?: 0.0
                 val totalDist = entry.sets.sumOf { it.distance ?: 0.0 }
@@ -247,8 +248,7 @@ fun HistoryCard(
                     fontWeight = FontWeight.SemiBold
                 )
 
-            } else if (isCardioLikely) {
-                // 🏃‍♂️ CARDIO SUMMARY (Total Distance & Time)
+            } else if (isCardio) {
                 val totalDist = entry.sets.sumOf { it.distance ?: 0.0 }
                 val totalSeconds = entry.sets.sumOf { it.time ?: 0 }
 
@@ -257,32 +257,25 @@ fun HistoryCard(
                 val timeStr = String.format("%d:%02d", m, s)
                 val distStr = String.format("%.2f", totalDist).trimEnd('0').trimEnd('.')
 
+                // Find the level/speed used most often
                 val dominantSetGroup = entry.sets
                     .groupBy { Pair(it.reps, it.weight) }
-                    .entries
-                    .maxWithOrNull(
-                        compareBy<Map.Entry<Pair<Int, Double>, List<com.dravenmiller.swolescroll.model.Set>>> {
-                            it.value.sumOf { s -> s.time }
-                        }.thenBy {
-                            it.value.sumOf { s -> s.distance ?: 0.0 }
-                        }
-                    )
+                    .maxByOrNull { it.value.sumOf { s -> s.time } }
 
                 val domReps = dominantSetGroup?.key?.first ?: 0
                 val domWeight = dominantSetGroup?.key?.second ?: 0.0
 
                 val details = mutableListOf<String>()
-                val isTreadmill = exerciseName.contains("Treadmill", true)
-
                 if (isTreadmill) {
-                    if (domWeight > 0) details.add("Lvl $domWeight")
-                    if (domReps > 0) details.add("${domReps/10.0}% Inc")
+                    if (domWeight > 0) details.add("Spd $domWeight")
+                    val inc = domReps / 10.0
+                    if (inc > 0) details.add("$inc% Inc")
                 } else {
-                    if (domWeight > 0) details.add("Lvl $domWeight")
+                    if (domWeight > 0) details.add("Lvl ${domWeight.toInt()}")
                 }
 
                 val detailStr = if (details.isNotEmpty()) " (@ ${details.joinToString(", ")})" else ""
-                val unit = if (exerciseName.contains("Stair", true)) "stairs" else "mi"
+                val unit = if (isStairs) "stairs" else "mi"
 
                 Text(
                     text = "Total: $distStr $unit in $timeStr$detailStr",
@@ -295,13 +288,9 @@ fun HistoryCard(
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             // --- SET LIST ---
-            val visibleSets = if (isCardioLikely) {
-                entry.sets.filter { (it.distance ?: 0.0) > 0.0 }
-            } else {
-                entry.sets
-            }
-
-            visibleSets.forEachIndexed { index, set ->
+            // Notice: We do NOT filter out sets with 0 distance anymore.
+            // This ensures pure time/level logs are still displayed properly.
+            entry.sets.forEachIndexed { index, set ->
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -309,32 +298,35 @@ fun HistoryCard(
                     Text(text = "Set ${index + 1}", style = MaterialTheme.typography.bodyMedium)
 
                     val formattedText = when {
-                        // 1. CARRY (Explicit Check First!)
+                        // 1. CARRY
                         isCarry -> {
                             val dist = set.distance ?: 0.0
                             "${set.weight} lbs for $dist yds"
                         }
 
-                        // 2. CARDIO
-                        isCardioLikely && (set.distance ?: 0.0) > 0 -> {
+                        // 2. CARDIO (Handles 0 distance cleanly!)
+                        isCardio -> {
                             val d = set.distance ?: 0.0
                             val t = set.timeFormatted()
 
-                            val isTreadmillRow = exerciseName.contains("Treadmill", true)
-                            val speed = set.reps / 10.0
-                            val rowWeight = set.weight
-
                             val extras = mutableListOf<String>()
-                            if (isTreadmillRow) {
-                                if (rowWeight > 0) extras.add("Lvl $rowWeight")
-                                if (speed > 0) extras.add("$speed% Inc")
+                            if (isTreadmill) {
+                                if (set.weight > 0) extras.add("Spd ${set.weight}")
+                                val inc = set.reps / 10.0
+                                if (inc > 0) extras.add("$inc% Inc")
                             } else {
-                                if (rowWeight > 0) extras.add("Lvl $rowWeight")
+                                if (set.weight > 0) extras.add("Lvl ${set.weight.toInt()}")
                             }
 
                             val extraStr = if (extras.isNotEmpty()) " (${extras.joinToString(", ")})" else ""
-                            val rowUnit = if (exerciseName.contains("Stair", true)) "stairs" else "mi"
-                            "$d $rowUnit in $t$extraStr"
+                            val rowUnit = if (isStairs) "stairs" else "mi"
+
+                            // If distance is > 0 show it, otherwise just show time and level
+                            if (d > 0) {
+                                "$d $rowUnit in $t$extraStr"
+                            } else {
+                                "$t$extraStr"
+                            }
                         }
 
                         // 3. ISOMETRIC (Time based, no reps)
@@ -343,7 +335,7 @@ fun HistoryCard(
                             "$w${set.timeFormatted()}"
                         }
 
-                        // 4. STRENGTH (Standard)
+                        // 4. STRENGTH (Standard Fallback)
                         else -> "${set.weight} lbs x ${set.reps} reps"
                     }
 

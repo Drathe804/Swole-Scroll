@@ -4,9 +4,19 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColor
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -15,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -46,10 +57,12 @@ import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -65,13 +78,24 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.TextUnitType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.zIndex
 import com.dravenmiller.swolescroll.model.ExerciseType
 import com.dravenmiller.swolescroll.model.Set
 import com.dravenmiller.swolescroll.model.WorkoutExercise
@@ -79,6 +103,9 @@ import com.dravenmiller.swolescroll.ui.components.EditExerciseItem
 import com.dravenmiller.swolescroll.ui.components.SwoleButton
 import com.dravenmiller.swolescroll.ui.dialogs.ExerciseSelectionDialog
 import com.dravenmiller.swolescroll.util.BodyweightMath
+import com.dravenmiller.swolescroll.util.MonsterRoster
+import com.dravenmiller.swolescroll.util.RpgMath
+import kotlinx.coroutines.delay
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -95,9 +122,21 @@ fun LogWorkoutScreen(
     onSaveFinished: () -> Unit
 ) {
     val addedExercises = viewModel.addedExercises
+    val monsterHpMap by viewModel.monsterHpMap.collectAsState()
+    val historicalHordeHpMap by viewModel.historicalHordeHpMap.collectAsState()
     val knownExercises by viewModel.exerciseList.collectAsState(initial = emptyList())
     val prMapState = viewModel.personalRecords.collectAsState()
     val historyMapState = viewModel.exerciseNotesHistory.collectAsState()
+
+    val isSiegeModeEnabled by viewModel.isSiegeModeEnabled.collectAsState() // 👈 Add this
+
+    val lifetimeVolume by viewModel.lifetimeVolume.collectAsState()
+
+    // Victory Screen State
+    var showVictoryOverlay by remember { mutableStateOf(false) }
+    var capturedStartXp by remember { mutableStateOf(0) }
+    var capturedGainedXp by remember { mutableStateOf(0) }
+
 
     var showFinishDialog by remember { mutableStateOf(false) }
     var showExitDialog by remember { mutableStateOf(false) }
@@ -128,7 +167,7 @@ fun LogWorkoutScreen(
                     set.weight
                 }
                 val d = set.distance ?: 0.0
-                val t = set.time ?: 0
+                set.time ?: 0
                 val safeType = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
 
                 when (safeType) {
@@ -275,8 +314,21 @@ fun LogWorkoutScreen(
                 SwoleButton(
                     text = "Save & Finish",
                     onClick = {
-                        showFinishDialog = false
-                        viewModel.saveWorkout(onSaved = onSaveFinished)
+                        if (isSiegeModeEnabled && currentSessionVolume > 0) {
+                            // 1. Capture the exact XP before saving
+                            capturedStartXp = lifetimeVolume
+                            capturedGainedXp = currentSessionVolume
+
+                            // 2. Trigger the Victory Overlay!
+                            showVictoryOverlay = true
+
+                            // 3. Save the workout silently in the background
+                            viewModel.saveWorkout { }
+                        } else {
+                            // Standard Mode: Just save and leave
+                            viewModel.saveWorkout(onSaved = onSaveFinished)
+                            showFinishDialog = false
+                        }
                     }
                 )
             },
@@ -399,12 +451,173 @@ fun LogWorkoutScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    if (currentSessionVolume > 0){
+                    // 🎚️ TOGGLE BANNER VS STANDARD CARD
+                    if (isSiegeModeEnabled && addedExercises.isNotEmpty()) {
+                    // 🏰 THE HORDE SIEGE BANNER 🏰
+                    if (addedExercises.isNotEmpty()) {
+                        val rawMuscle = addedExercises.first().exercise.muscleGroup
+                        val domMuscle = viewModel.getBroadMuscleGroup(rawMuscle)
+                        val lastWeekVolume = historicalHordeHpMap[domMuscle] ?: 5000 // Last week's effort!
+
+                        val isOvertime = currentSessionVolume > lastWeekVolume
+                        val remainingHordeHp = (lastWeekVolume - currentSessionVolume).coerceAtLeast(0)
+                        val hordePercentage = (remainingHordeHp.toFloat() / lastWeekVolume.toFloat()).coerceIn(0f, 1f)
+
+                        // Animations for crushing last week's volume
+                        val infiniteTransition = rememberInfiniteTransition(label = "HordePulse")
+                        val overtimeColor by infiniteTransition.animateColor(
+                            initialValue = Color(0xFFFFD700), // Gold
+                            targetValue = MaterialTheme.colorScheme.error, // Red
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(800, easing = LinearEasing),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "OvertimeColor"
+                        )
+
+                        val bannerColor = if (isOvertime) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.errorContainer
+                        val textColor = if (isOvertime) overtimeColor else MaterialTheme.colorScheme.onErrorContainer
+
+                        // 🏰 THE HORDE SIEGE ARENA 🏰
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                            colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
+                            elevation = CardDefaults.cardElevation(defaultElevation = if (isOvertime) 8.dp else 2.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 8.dp)
+                                .padding(bottom = 16.dp)
+                        ) {
+                            val hordeRoster = remember(domMuscle) { com.dravenmiller.swolescroll.util.MonsterRoster.getHordeLineup(domMuscle) }
+
+                            // The Main Arena Box (Fixed compact height!)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(160.dp) // 👈 Much tighter and cleaner
+                                    .drawBehind {
+                                        val w = size.width
+                                        val h = size.height
+                                        val groundHeight = h * 0.35f // Ground is the bottom 35%
+                                        val horizon = h - groundHeight // Where sky meets dirt
+                                        val pillarWidth = 24.dp.toPx()
+
+                                        // 1. 🌤️ The Sky (Top 65%)
+                                        drawRect(
+                                            brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                                                colors = listOf(
+                                                    androidx.compose.ui.graphics.Color(0xFF4FC3F7), // Light Sky
+                                                    androidx.compose.ui.graphics.Color(0xFF0288D1)  // Deep Sky
+                                                )
+                                            ),
+                                            size = androidx.compose.ui.geometry.Size(w, horizon)
+                                        )
+
+                                        // 2. 🟤 The Ground (Bottom 35%)
+                                        drawRect(
+                                            color = androidx.compose.ui.graphics.Color(0xFF4E342E), // Dark Dirt
+                                            topLeft = androidx.compose.ui.geometry.Offset(0f, horizon),
+                                            size = androidx.compose.ui.geometry.Size(w, groundHeight)
+                                        )
+
+                                        // 3. 🏛️ The Pillars
+                                        val pillarColor = androidx.compose.ui.graphics.Color(0xFF795548)
+                                        val pillarShadow = androidx.compose.ui.graphics.Color(0xFF3E2723)
+
+                                        // Left Pillar
+                                        drawRect(color = pillarColor, topLeft = androidx.compose.ui.geometry.Offset(0f, 0f), size = androidx.compose.ui.geometry.Size(pillarWidth, h))
+                                        drawRect(color = pillarShadow, topLeft = androidx.compose.ui.geometry.Offset(pillarWidth - 10f, 0f), size = androidx.compose.ui.geometry.Size(10f, h))
+
+                                        // Right Pillar
+                                        drawRect(color = pillarColor, topLeft = androidx.compose.ui.geometry.Offset(w - pillarWidth, 0f), size = androidx.compose.ui.geometry.Size(pillarWidth, h))
+                                        drawRect(color = pillarShadow, topLeft = androidx.compose.ui.geometry.Offset(w - pillarWidth, 0f), size = androidx.compose.ui.geometry.Size(10f, h))
+                                    }
+                            ) {
+                                Column(modifier = Modifier.fillMaxSize()) {
+
+                                    // 📊 THE UI LAYER (Moved to the Top Sky!)
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 32.dp, vertical = 8.dp) // Keeps text inside pillars
+                                    ) {
+                                        val textDisplayColor = if (isOvertime) overtimeColor else androidx.compose.ui.graphics.Color.White
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = if (isOvertime) "HORDE CRUSHED!" else "$domMuscle Horde",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = textDisplayColor
+                                            )
+                                            Text(
+                                                text = if (isOvertime) "MAX DMG!" else "$remainingHordeHp / $lastWeekVolume",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = textDisplayColor
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.height(4.dp))
+
+                                        // The Global Health Bar
+                                        LinearProgressIndicator(
+                                            progress = { hordePercentage },
+                                            modifier = Modifier.fillMaxWidth().height(10.dp),
+                                            color = if (isOvertime) textDisplayColor else androidx.compose.ui.graphics.Color(0xFFE53935), // Bloody Red
+                                            trackColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f),
+                                            strokeCap = androidx.compose.ui.graphics.StrokeCap.Round
+                                        )
+
+                                        Spacer(modifier = Modifier.height(2.dp))
+
+                                        Text(
+                                            text = "Total Damage Dealt: ${java.text.NumberFormat.getIntegerInstance().format(currentSessionVolume)}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = androidx.compose.ui.graphics.Color(0xFFE1F5FE) // Light Sky Blue
+                                        )
+                                    }
+
+                                    // 👾 THE MONSTER STAGE (Bottom Ground!)
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .weight(1f) // Fills the rest of the card below the UI
+                                            .padding(horizontal = 16.dp) // 👈 Reduced from 32dp to give them more room to spread!
+                                            .padding(bottom = 12.dp),
+                                        contentAlignment = Alignment.BottomCenter
+                                    ) {
+                                        hordeRoster.forEachIndexed { index, imgRes ->
+                                            // 👈 Increased multiplier from 20 to 28 to spread them out!
+                                            val xOffset = ((index - 5.5f) * 26).dp
+                                            // 👈 Pushed the back row up slightly more so they aren't hidden
+                                            val yOffset = if (index % 2 == 0) 0.dp else (-16).dp
+
+                                            androidx.compose.foundation.Image(
+                                                painter = androidx.compose.ui.res.painterResource(imgRes),
+                                                contentDescription = null,
+                                                modifier = Modifier
+                                                    .size(48.dp)
+                                                    .offset(x = xOffset, y = yOffset)
+                                                    .zIndex(if (index % 2 == 0) 1f else 0f)
+                                            )
+                                        }
+                                    }
+
+                                }
+                            }
+                        }
+
+                    }
+
+                    } else if (currentSessionVolume > 0) {
+                        // 📊 STANDARD SESSION VOLUME CARD 📊
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                         ){
                             Row(
                                 modifier = Modifier.padding(12.dp),
@@ -422,6 +635,7 @@ fun LogWorkoutScreen(
                             }
                         }
                     }
+
 
                     // Check if it's a quest AND has instructions
                     if (viewModel.isQuest.value && viewModel.workoutNote.value.isNotBlank()) {
@@ -498,7 +712,7 @@ fun LogWorkoutScreen(
                     items(addedExercises.size) { index ->
                         if (!isFocusMode || expandedIndex == index) {
                             val workoutExercise = addedExercises[index]
-                            val thisPr = prMapState.value[workoutExercise.exercise.name]
+                            prMapState.value[workoutExercise.exercise.name]
                             val thisHistory = historyMapState.value[workoutExercise.exercise.name] ?: emptyList()
                             val type = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
                             val isDungeon = workoutExercise.supersetId != null
@@ -512,7 +726,7 @@ fun LogWorkoutScreen(
                                     else -> workoutExercise.sets.maxOfOrNull { it.weight } ?: 0.0
                                 }
                             }
-                            val historyValue = remember(historyPrString){
+                            remember(historyPrString){
                                 historyPrString?.split(" ")?.firstOrNull()?.toDoubleOrNull() ?: 0.0
                             }
                             val bestSetToday = workoutExercise.sets.maxByOrNull { it.weight }
@@ -521,7 +735,7 @@ fun LogWorkoutScreen(
                             val currentBestDistance = bestSetToday?.distance ?: 0.0
                             val currentBestTime = bestSetToday?.time ?: 0
 
-                            val isValidSet = when (type) {
+                            when (type) {
                                 ExerciseType.CARDIO -> currentBestValue > 0 // Distance > 0
                                 ExerciseType.LoadedCarry -> currentBestDistance > 0
                                 ExerciseType.ISOMETRIC -> currentBestTime > 0
@@ -537,8 +751,8 @@ fun LogWorkoutScreen(
                                 // Looks for the number after "x" (e.g., "150 lbs x 5")
                                 historyPrString?.split("x")?.getOrNull(1)?.trim()?.toIntOrNull() ?: 0
                             }
-                            val isWeightPR = currentBestWeight > historyWeight
-                            val isRepPR = (currentBestWeight == historyWeight) && (currentBestWeight > 0) && (currentBestReps > historyReps)
+                            currentBestWeight > historyWeight
+                            (currentBestWeight == historyWeight) && (currentBestWeight > 0) && (currentBestReps > historyReps)
 
                             // 2. CALCULATE "IS NEW RECORD" BASED ON TYPE 🧠
                             val isNewRecord = remember(workoutExercise.sets, historyPrString, type) {
@@ -703,6 +917,8 @@ fun LogWorkoutScreen(
                                         EditExerciseItem(
                                             workoutExercise = workoutExercise,
                                             userWeight = userWeight,
+                                            monsterHp = monsterHpMap[workoutExercise.exercise.name] ?: 2000,
+                                            isSiegeModeEnabled = isSiegeModeEnabled,
                                             isExpanded = expandedIndex == index,
                                             personalRecord = displayPr,
                                             isNewPr = isNewRecord,
@@ -765,11 +981,10 @@ fun LogWorkoutScreen(
 
                                                 // 2. CHECK IF WE SHOULD SHOW THE POPUP 🧠
                                                 // Treadmill: incline = Weight (Speed), level = Reps (Inc)
-                                                val isTreadmillCheck =
-                                                    workoutExercise.exercise.name.contains(
-                                                        "Treadmill",
-                                                        ignoreCase = true
-                                                    )
+                                                workoutExercise.exercise.name.contains(
+                                                    "Treadmill",
+                                                    ignoreCase = true
+                                                )
 
                                                 // ✅ FIXED LOGIC HERE:
                                                 // If Treadmill: Stop when Incline (which holds Speed) == 0.0
@@ -1092,6 +1307,142 @@ fun LogWorkoutScreen(
                         TextButton(onClick = { showDistanceDialog = false }) { Text("Cancel") }
                     }
                 )
+            }
+        }
+        // Render the Victory Overlay if toggled!
+        if (showVictoryOverlay) {
+            VictoryOverlay(
+                startingXp = capturedStartXp,
+                gainedXp = capturedGainedXp,
+                onContinue = {
+                    showVictoryOverlay = false
+                    onBackClick() // Actually leave the screen now!
+                },
+                workoutName = viewModel.workoutName.value
+            )
+        }
+    }
+}
+
+// 🏆 EPIC VICTORY OVERLAY 🏆
+@Composable
+fun VictoryOverlay(
+    workoutName: String, // 👈 Now it knows what quest you finished!
+    startingXp: Int,
+    gainedXp: Int,
+    onContinue: () -> Unit
+) {
+    // 1. The Core Animation 
+    val animatedXp = remember { Animatable(startingXp.toFloat()) }
+    var isAnimationDone by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        delay(400) // Brief dramatic pause before filling
+        animatedXp.animateTo(
+            targetValue = (startingXp + gainedXp).toFloat(),
+            animationSpec = tween(
+                durationMillis = 2500,
+                easing = FastOutSlowInEasing
+            )
+        )
+        delay(1500) // 👈 THE FIX: 1.5 second pause AFTER filling!
+        isAnimationDone = true // Now the button fades in
+    }
+
+    // 2. Real-time Math calculation
+    val currentAnimXp = animatedXp.value.toInt()
+    val currentLevel = RpgMath.calculateLevel(currentAnimXp)
+    val levelBaseXp = RpgMath.xpRequiredForLevel(currentLevel)
+    val nextLevelXp = RpgMath.xpRequiredForLevel(currentLevel + 1)
+
+    // Automatically drops to 0 and wraps around when a level is crossed!
+    val progress = if (nextLevelXp > levelBaseXp) {
+        (currentAnimXp - levelBaseXp).toFloat() / (nextLevelXp - levelBaseXp).toFloat()
+    } else 0f
+
+    // 3. The UI
+    Dialog(
+        onDismissRequest = { /* Prevent dismissing by tapping outside */ },
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = Color.Black.copy(alpha = 0.85f) // Dark dramatic background
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                // 📜 QUEST COMPLETE HEADER
+                Text(
+                    text = "QUEST COMPLETE",
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Black,
+                    color = Color(0xFFFFD700), // Gold
+                    textAlign = TextAlign.Center
+                )
+
+                Text(
+                    text = workoutName,
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(Modifier.height(48.dp))
+
+                // 💰 THE REWARD
+                Text(
+                    text = "REWARD:",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.secondary,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = TextUnit(2f, TextUnitType.Sp)
+                )
+                Text(
+                    text = "+${NumberFormat.getIntegerInstance().format(gainedXp)} XP",
+                    style = MaterialTheme.typography.displayMedium,
+                    color = Color(0xFF4CAF50), // Epic Green
+                    fontWeight = FontWeight.Black
+                )
+
+                Spacer(Modifier.height(48.dp))
+
+                // 🛡️ THE XP BAR
+                Text("Level $currentLevel", style = MaterialTheme.typography.headlineLarge, color = Color.White, fontWeight = FontWeight.Black)
+
+                Spacer(Modifier.height(16.dp))
+
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.fillMaxWidth().height(16.dp),
+                    color = Color(0xFF2196F3), // Mana/XP Blue
+                    trackColor = Color.DarkGray,
+                    strokeCap = StrokeCap.Round
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                Text(
+                    text = "${NumberFormat.getIntegerInstance().format(currentAnimXp)} / ${NumberFormat.getIntegerInstance().format(nextLevelXp)}",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.LightGray
+                )
+
+                Spacer(Modifier.height(64.dp))
+
+                // Show button only when animation AND pause finish
+                AnimatedVisibility(visible = isAnimationDone) {
+                    Button(
+                        onClick = onContinue,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700), contentColor = Color.Black),
+                        modifier = Modifier.fillMaxWidth().height(56.dp)
+                    ) {
+                        Text("Continue Quest", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         }
     }

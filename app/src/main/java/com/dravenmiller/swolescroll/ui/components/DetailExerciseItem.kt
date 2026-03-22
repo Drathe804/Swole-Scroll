@@ -42,7 +42,7 @@ fun DetailExerciseItem(
 ) {
     // STATE: Is the dropdown open?
     var expanded by remember { mutableStateOf(false) }
-    val totalVol = remember(workoutExercise) { workoutExercise.calculateTotalVolume(userWeight) }
+    remember(workoutExercise) { workoutExercise.calculateTotalVolume(userWeight) }
     val totalTime = remember(workoutExercise) { workoutExercise.calculateTotalTUT() }
 
     // Safe Type Fallback
@@ -126,7 +126,7 @@ fun DetailExerciseItem(
             val multiplier = if (workoutExercise.exercise.isSingleSide) 2 else 1
             val w = set.weight
             val d = set.distance ?: 0.0
-            val t = set.time ?: 0
+            set.time ?: 0
 
             when(safeType) {
                 ExerciseType.STRENGTH -> (w * set.reps * multiplier).toInt()

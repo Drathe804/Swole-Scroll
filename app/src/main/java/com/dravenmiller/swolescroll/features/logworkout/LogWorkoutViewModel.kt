@@ -22,6 +22,7 @@ import com.dravenmiller.swolescroll.model.ExerciseType
 import com.dravenmiller.swolescroll.model.Set
 import com.dravenmiller.swolescroll.model.Workout
 import com.dravenmiller.swolescroll.model.WorkoutExercise
+import com.dravenmiller.swolescroll.util.BodyweightMath
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,13 +36,13 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlin.collections.map
 import kotlin.collections.sumOf
+import kotlinx.coroutines.flow.combine
 
 // Change "ViewModel" to "AndroidViewModel(application)"
 class LogWorkoutViewModel(
     private val application: Application, // Needs this to save files
     private val db: AppDatabase // Pass the whole DB for easier access
 ) : AndroidViewModel(application) {
-
 
 
     val isQuest = mutableStateOf(false)
@@ -84,12 +85,121 @@ class LogWorkoutViewModel(
         }
     }
 
+    // 🎚️ SIEGE MODE TOGGLE (Saved instantly to device)
+    private val prefs = application.getSharedPreferences("SwoleScrollPrefs", android.content.Context.MODE_PRIVATE)
+    private val _isSiegeModeEnabled = MutableStateFlow(prefs.getBoolean("siege_mode", true)) // Defaults to TRUE
+    val isSiegeModeEnabled = _isSiegeModeEnabled.asStateFlow()
+
+    fun toggleSiegeMode() {
+        val newState = !_isSiegeModeEnabled.value
+        prefs.edit().putBoolean("siege_mode", newState).apply()
+        _isSiegeModeEnabled.value = newState
+    }
+
     val exerciseList = db.exerciseDao().getAllExercises()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val userBodyWeight = db.userDao().getUserProfile()
         .map { it?.bodyWeight ?: 0.0 } // Default to 0 if not set
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    // ⚔️ LIFETIME XP (For the Victory Screen calculation)
+    val lifetimeVolume = db.workoutDao().getAllWorkouts()
+        .combine(userBodyWeight) { workouts, uWeight ->
+            var total = 0
+            workouts.forEach { workout ->
+                workout.exercises.forEach { we ->
+                    val type = we.exercise.type ?: ExerciseType.STRENGTH
+                    val multiplier = if (we.exercise.isSingleSide) 2 else 1
+                    val bwPercentage = BodyweightMath.getMultiplier(we.exercise.name)
+
+                    we.sets.forEach { set ->
+                        val w = if (we.exercise.isBodyweight) (uWeight * bwPercentage) + set.weight else set.weight
+                        val d = set.distance ?: 0.0
+                        val t = set.time ?: 0
+
+                        total += when (type) {
+                            ExerciseType.STRENGTH -> (w * set.reps * multiplier).toInt()
+                            ExerciseType.ISOMETRIC -> (w * t * multiplier).toInt()
+                            ExerciseType.LoadedCarry -> (w * d * multiplier).toInt()
+                            ExerciseType.TWENTY_ONES -> (((w * set.reps * multiplier) * 2) / 3).toInt()
+                            else -> 0
+                        }
+                    }
+                }
+            }
+            total
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+
+    // ⚔️ DEFEND THE KINGDOM: MONSTER HP GENERATOR
+    val monsterHpMap: StateFlow<Map<String, Int>> = db.workoutDao().getAllWorkouts()
+        .combine(userBodyWeight) { workouts, uWeight ->
+            val hpMap = mutableMapOf<String, Int>()
+            workouts.sortedByDescending { it.date }.forEach { workout ->
+                workout.exercises.forEach { we ->
+                    val name = we.exercise.name
+                    if (!hpMap.containsKey(name)) {
+                        var sessionVol = 0
+                        val type = we.exercise.type ?: ExerciseType.STRENGTH
+                        val multiplier = if (we.exercise.isSingleSide) 2 else 1
+                        val bwPercentage = BodyweightMath.getMultiplier(name)
+
+                        we.sets.forEach { set ->
+                            val w = if (we.exercise.isBodyweight) (uWeight * bwPercentage) + set.weight else set.weight
+                            val d = set.distance ?: 0.0
+                            val t = set.time ?: 0
+
+                            sessionVol += when (type) {
+                                ExerciseType.STRENGTH -> (w * set.reps * multiplier).toInt()
+                                ExerciseType.ISOMETRIC -> (w * t * multiplier).toInt()
+                                ExerciseType.LoadedCarry -> (w * d * multiplier).toInt()
+                                ExerciseType.TWENTY_ONES -> (((w * set.reps * multiplier) * 2) / 3).toInt()
+                                else -> 0
+                            }
+                        }
+                        if (sessionVol > 0) hpMap[name] = sessionVol
+                    }
+                }
+            }
+            hpMap
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    // 🏰 DEFEND THE KINGDOM: HISTORICAL HORDE HP
+    val historicalHordeHpMap: StateFlow<Map<String, Int>> = db.workoutDao().getAllWorkouts()
+        .combine(userBodyWeight) { workouts, uWeight ->
+            val map = mutableMapOf<String, Int>()
+            workouts.sortedByDescending { it.date }.forEach { workout ->
+                val rawMuscle = workout.exercises.firstOrNull()?.exercise?.muscleGroup ?: return@forEach
+                val broadMuscle = getBroadMuscleGroup(rawMuscle) // 👈 Groups "Front Delt" into "Shoulders"
+
+                if (!map.containsKey(broadMuscle)) { // 👈 Save it under the broad faction name!
+
+                    var totalVol = 0
+                    workout.exercises.forEach { we ->
+                        val type = we.exercise.type ?: ExerciseType.STRENGTH
+                        val multiplier = if (we.exercise.isSingleSide) 2 else 1
+                        val bwPercentage = BodyweightMath.getMultiplier(we.exercise.name)
+
+                        we.sets.forEach { set ->
+                            val w = if (we.exercise.isBodyweight) (uWeight * bwPercentage) + set.weight else set.weight
+                            val d = set.distance ?: 0.0
+                            val t = set.time ?: 0
+
+                            totalVol += when (type) {
+                                ExerciseType.STRENGTH -> (w * set.reps * multiplier).toInt()
+                                ExerciseType.ISOMETRIC -> (w * t * multiplier).toInt()
+                                ExerciseType.LoadedCarry -> (w * d * multiplier).toInt()
+                                ExerciseType.TWENTY_ONES -> (((w * set.reps * multiplier) * 2) / 3).toInt()
+                                else -> 0
+                            }
+                        }
+                    }
+                    if (totalVol > 0) map[broadMuscle] = totalVol
+                }
+            }
+            map
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     // 1. SMART PR TRACKER (Totals + Dominant Level) 🏆
     val personalRecords: StateFlow<Map<String, String>> =
@@ -189,11 +299,27 @@ class LogWorkoutViewModel(
                 initialValue = emptyMap()
             )
 
+    // 🧠 THE FACTION SORTER: Groups sub-muscles into major armies
+    fun getBroadMuscleGroup(muscle: String): String {
+        val m = muscle.lowercase()
+        return when {
+            m.contains("chest") || m.contains("pec") -> "Chest"
+            m.contains("back") || m.contains("lat") || m.contains("rhomboid") || m.contains("trap") -> "Back"
+            m.contains("leg") || m.contains("quad") || m.contains("ham") || m.contains("calf") || m.contains("calves") || m.contains("glute") -> "Legs"
+            m.contains("shoulder") || m.contains("delt") -> "Shoulders"
+            m.contains("bicep") || m.contains("tricep") || m.contains("arm") -> "Arms"
+            m.contains("core") || m.contains("abs") || m.contains("oblique") -> "Core"
+            else -> muscle.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString() }
+        }
+    }
+
+
 
     init {
         checkForDraft()
     }
-    val exerciseNotesHistory: kotlinx.coroutines.flow.StateFlow<Map<String, List<String>>> =
+
+    val exerciseNotesHistory: StateFlow<Map<String, List<String>>> =
         db.workoutDao().getAllWorkouts()
             .map { workouts ->
                 val notesMap = mutableMapOf<String, MutableList<String>>()
@@ -202,9 +328,10 @@ class LogWorkoutViewModel(
                 workouts.forEach { workout ->
                     val dateStr = dateFormat.format(java.util.Date(workout.date))
                     workout.exercises.forEach { workoutExercise ->
-                        if (!workoutExercise.note.isNullOrBlank()){
+                        if (!workoutExercise.note.isNullOrBlank()) {
                             val entry = "$dateStr: ${workoutExercise.note}"
-                            notesMap.getOrPut(workoutExercise.exercise.name) { mutableListOf() }.add(entry)
+                            notesMap.getOrPut(workoutExercise.exercise.name) { mutableListOf() }
+                                .add(entry)
                         }
                     }
                 }
@@ -249,7 +376,7 @@ class LogWorkoutViewModel(
                 //.filter { it.exercise.id == targetExerciseId }
                 .filter { it.exercise.name.trim().equals(name.trim(), ignoreCase = true) }
                 .map { it.copy(workoutDate = it.workoutDate) }
-                _exerciseHistory.value = foundHistory
+            _exerciseHistory.value = foundHistory
         }
     }
 
@@ -258,7 +385,7 @@ class LogWorkoutViewModel(
             val draft = db.draftDao().getDraft()
             if (draft != null) {
                 val savedWorkout = Gson().fromJson(draft.dataJson, Workout::class.java)
-                if(savedWorkout.isQuest){
+                if (savedWorkout.isQuest) {
                     pendingDraft = savedWorkout
                     resumeDraft()
                 } else {
@@ -268,7 +395,8 @@ class LogWorkoutViewModel(
             }
         }
     }
-    fun resumeDraft(){
+
+    fun resumeDraft() {
         pendingDraft?.let { workout ->
             workoutName.value = workout.name
             workoutDate.value = workout.date
@@ -280,14 +408,14 @@ class LogWorkoutViewModel(
         showResumeDialog.value = false
     }
 
-    fun discardDraft(){
+    fun discardDraft() {
         viewModelScope.launch {
             db.draftDao().clearDraft()
         }
         showResumeDialog.value = false
     }
 
-    fun autoSaveDraft(){
+    fun autoSaveDraft() {
         if (addedExercises.isEmpty() && workoutName.value.isBlank()) return
 
         viewModelScope.launch {
@@ -308,12 +436,12 @@ class LogWorkoutViewModel(
         isSingleSide: Boolean,
         type: ExerciseType,
         isBodyweight: Boolean,
-    ){
+    ) {
         viewModelScope.launch {
             val cleanName = name.trim()
             val existingExercise = db.exerciseDao().getExerciseByName(cleanName)
             val exerciseToUse = if (existingExercise != null) {
-                if (existingExercise.type != null){
+                if (existingExercise.type != null) {
                     val patchedExercise = existingExercise.copy(type = type)
                     db.exerciseDao().updateExercise(patchedExercise)
                     patchedExercise
@@ -358,7 +486,10 @@ class LogWorkoutViewModel(
                 // 🚨 MERGE DETECTED: We are renaming "A" to "B", but "B" already exists.
                 // Action: Move all history from A to B, then Delete A.
 
-                Log.d("UpdateExercise", "Merging '${updatedExercise.name}' into existing '${existingTarget.name}'")
+                Log.d(
+                    "UpdateExercise",
+                    "Merging '${updatedExercise.name}' into existing '${existingTarget.name}'"
+                )
 
                 // A. Update History: Find all workouts using the Old Exercise
                 val allWorkouts = db.workoutDao().getAllWorkoutsList()
@@ -547,7 +678,8 @@ class LogWorkoutViewModel(
             val allExercises = db.exerciseDao().getAllExercises().first()
             BackupManager.saveDataToStorage(application, allWorkouts, allExercises)
 
-            android.widget.Toast.makeText(application, "Saved!", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(application, "Saved!", android.widget.Toast.LENGTH_SHORT)
+                .show()
 
             db.draftDao().clearDraft()
 
@@ -556,11 +688,10 @@ class LogWorkoutViewModel(
     }
 
 
-
     fun splitCardioSet(
         exerciseId: String,
         currentSetIndex: Int,
-        elapsedSeconds: Int, // This is the TOTAL workout time now
+        elapsedSeconds: Int,
         newIncline: Double,
         newLevel: Int
     ) {
@@ -570,37 +701,36 @@ class LogWorkoutViewModel(
         val currentExercise = addedExercises[index]
         val currentSets = currentExercise.sets.toMutableList()
 
-        // 1. CALCULATE MATH: Subtract time from previous sets to get THIS set's duration
-        // Sum up all sets EXCEPT the current one we are editing
-        val previousTime = currentSets.filterIndexed { idx, _ -> idx != currentSetIndex }.sumOf { it.time ?: 0 }
-
-        // This set's actual length = Total Timer - Time used in previous sets
+        // 1. CALCULATE DURATION OF THE PREVIOUS INTERVAL
+        val previousTime =
+            currentSets.filterIndexed { idx, _ -> idx != currentSetIndex }.sumOf { it.time ?: 0 }
         val thisSetDuration = elapsedSeconds - previousTime
 
-        // 🧠 SMART CHECK: Rapid Taps (using the calculated duration)
-        // If this specific level lasted less than 1 second, just update, don't split.
-        if (thisSetDuration < 1 && currentSets.isNotEmpty()) {
+        // 🧠 10-SECOND NOISE FILTER
+        // If the previous interval lasted less than 10 seconds, we assume the user was just
+        // scrolling/tapping through levels and hasn't "settled" yet.
+        // We MERGE it into the new setting instead of creating a tiny 1-second set.
+        if (thisSetDuration < 10 && currentSets.isNotEmpty()) { // 👈 CHANGED FROM 1 TO 10
             val lastIndex = currentSets.lastIndex
             val lastSet = currentSets[lastIndex]
 
-            // Overwrite settings (Rapid fire correction)
+            // Overwrite the previous set's settings with the NEW settings
+            // This effectively "erases" the short interval
             currentSets[lastIndex] = lastSet.copy(
                 weight = newIncline,
                 reps = newLevel
             )
-        }
-        else {
-            // 💾 NORMAL LOGIC: Lock & Split
+        } else {
+            // 💾 LOCK & SPLIT (It was longer than 10s, so it's a valid interval)
 
-            // A. Update the OLD set with its calculated duration
+            // A. Finalize the duration of the old set
             if (currentSetIndex in currentSets.indices) {
                 val oldSet = currentSets[currentSetIndex]
                 currentSets[currentSetIndex] = oldSet.copy(time = thisSetDuration)
             }
 
             // B. Create the NEW set
-            // Note: We don't save 'elapsedSeconds' here. The time is 0 until we calculate it later.
-            val newSet = com.dravenmiller.swolescroll.model.Set(
+            val newSet = Set(
                 id = java.util.UUID.randomUUID().toString(),
                 weight = newIncline,
                 reps = newLevel,
@@ -637,7 +767,7 @@ class LogWorkoutViewModel(
      */
     fun distributeTotalDistance(
         totalDistance: Double,
-        sets: List<com.dravenmiller.swolescroll.model.Set>
+        sets: List<Set>
     ): List<Set> {
         // 1. Calculate "Effort Points" for each set
         // We use (Level * Seconds) to weight it.
@@ -669,6 +799,7 @@ class LogWorkoutViewModel(
             set.copy(distance = cleanDistance)
         }
     }
+
     fun applyDistanceToExercise(exerciseId: String, distance: Double) {
         val index = addedExercises.indexOfFirst { it.id == exerciseId }
         if (index == -1) return

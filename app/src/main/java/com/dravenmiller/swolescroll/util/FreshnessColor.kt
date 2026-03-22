@@ -33,7 +33,7 @@ object FreshnessUtils {
 
         // 2. Calculate the Difference
         val diff = System.currentTimeMillis() - lastPerformed
-        val days = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(diff)
+        val days = TimeUnit.MILLISECONDS.toDays(diff)
 
         // 3. Return Human-Readable Time
         return when {

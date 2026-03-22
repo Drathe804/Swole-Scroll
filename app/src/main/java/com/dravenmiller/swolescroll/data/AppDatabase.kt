@@ -118,7 +118,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_8_9
                     )
                     // 👇 ADD THE CALLBACK HERE
-                    .addCallback(object : RoomDatabase.Callback() {
+                    .addCallback(object : Callback() {
 
                         // 1. RUNS EVERY TIME APP OPENS (Fixes old data silently)
                         override fun onOpen(db: SupportSQLiteDatabase) {

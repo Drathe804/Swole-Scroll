@@ -58,7 +58,7 @@ class StatsViewModel(private val dao: WorkoutDao) : ViewModel() {
 
                     // D. Calculate the point
                     if (bestSet != null && bestSet.weight > 0.0) {
-                        val smartMax = OneRepMaxCalculator.getSmart1RM(bestSet.weight, bestSet.reps)
+                        OneRepMaxCalculator.getSmart1RM(bestSet.weight, bestSet.reps)
 
                         // Label the formula for debug/tooltips
                         val label = when {
