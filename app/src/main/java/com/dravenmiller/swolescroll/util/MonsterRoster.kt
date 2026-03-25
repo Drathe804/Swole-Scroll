@@ -349,12 +349,17 @@ object MonsterRoster {
         return faction.shuffled(stableRandom).take(12)
     }
 
-    // 2. Individual exercises pull their monster from the 12-man Horde
-    fun getMonsterFromHorde(muscleGroup: String, exerciseName: String): Int {
+    // We now use the exercise's position in the list (index) instead of its name!
+    fun getMonsterFromHorde(muscleGroup: String, exerciseIndex: Int, isPhoenix: Boolean = false): Int {
+        // 🦅 The Phoenix Exception
+        if (isPhoenix) return R.drawable.monster_phoenix // Replace with your actual Phoenix image ID
+
         val horde = getHordeLineup(muscleGroup)
         if (horde.isEmpty()) return R.drawable.ic_launcher_foreground
 
-        val index = kotlin.math.abs(exerciseName.hashCode()) % horde.size
-        return horde[index]
+        // By using the exact index, monster #0 is always different from monster #1, #2, etc.
+        val safeIndex = exerciseIndex % horde.size
+        return horde[safeIndex]
     }
+
 }

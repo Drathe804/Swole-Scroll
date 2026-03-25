@@ -5,18 +5,25 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColor
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -28,12 +35,15 @@ import com.dravenmiller.swolescroll.model.WorkoutExercise
 import com.dravenmiller.swolescroll.util.BodyweightMath
 import com.dravenmiller.swolescroll.util.MonsterRoster
 import kotlinx.coroutines.delay
+import java.text.NumberFormat
 
 @Composable
 fun EditExerciseItem(
     workoutExercise: WorkoutExercise,
+    exerciseIndex: Int,
     userWeight: Double = 0.0,
     monsterHp: Int = 2000,
+    monsterImageId: Int,
     isSiegeModeEnabled: Boolean = true,
     isExpanded: Boolean,
     personalRecord: String?,
@@ -49,12 +59,12 @@ fun EditExerciseItem(
     onTreadmillSplit: (Int, Double, Int) -> Unit,
     backgroundColor: Color? = null
 ) {
-    var selectedTab by remember { mutableStateOf(0) }
+    var selectedTab by remember { mutableIntStateOf(0) }
     var showExitWarning by remember { mutableStateOf(false) }
     val cardColor = backgroundColor ?: MaterialTheme.colorScheme.surface
 
     // --- LIVE TIMER STATE ---
-    var activeSeconds by remember { mutableStateOf(0) }
+    var activeSeconds by remember { mutableIntStateOf(0) }
     val currentSet = workoutExercise.sets.lastOrNull()
 
     // ... (Keep your Animation Logic for PRs here) ...
@@ -81,19 +91,15 @@ fun EditExerciseItem(
     // 🛡️ CRASH FIX: Force a default type
     val safeType = workoutExercise.exercise.type ?: ExerciseType.STRENGTH
 
-    // 🧠 1. REPLACE STRING CHECKS WITH TYPE CHECKS
     val isTreadmill = safeType == ExerciseType.TREADMILL
     val isStairs = safeType == ExerciseType.STAIRS
 
     val primaryVal = currentSet?.weight ?: 0.0
-    // If treadmill, secondary is Reps (Incline). Otherwise 0.
     val secondaryValRaw = if (isTreadmill) (currentSet?.reps ?: 0) else 0
     val isMoving = primaryVal > 0.0
 
-    // ⏱️ TIMER LOGIC (Updated to check .isCardio property)
+    // ⏱️ TIMER LOGIC
     LaunchedEffect(safeType, isExpanded, isMoving) {
-        // 👇 CHECK PROPERTY, NOT ENUM EQUALITY
-        // This ensures Timer works for Treadmill, Stairs, Rowing, etc.
         if (safeType.isCardio && isExpanded && isMoving) {
             val startTime = System.currentTimeMillis()
             val initialSeconds = activeSeconds
@@ -110,11 +116,9 @@ fun EditExerciseItem(
         BodyweightMath.getMultiplier(workoutExercise.exercise.name)
     }
 
-
     val currentVolume = remember(workoutExercise.sets, workoutExercise.exercise.isSingleSide) {
         workoutExercise.sets.sumOf { set ->
             val multiplier = if (workoutExercise.exercise.isSingleSide) 2 else 1
-            // 3. Calculate the "Ghost" Total
             val safeWeight = if (workoutExercise.exercise.isBodyweight) {
                 (userWeight * bwMultiplier) + set.weight
             } else {
@@ -136,7 +140,6 @@ fun EditExerciseItem(
         }
     }
 
-    // 🛡️ BackHandler Check (Using .isCardio property)
     BackHandler(enabled = isExpanded && isMoving && safeType.isCardio) {
         showExitWarning = true
     }
@@ -152,7 +155,6 @@ fun EditExerciseItem(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable {
-                        // Check property here too
                         if (isExpanded && isMoving && safeType.isCardio) {
                             showExitWarning = true
                         } else {
@@ -167,9 +169,13 @@ fun EditExerciseItem(
 
                     if (isSiegeModeEnabled && !safeType.isCardio) {
                         // ⚔️ DEFEND THE KINGDOM - MONSTER HP BAR ⚔️
-                        val selectedMonsterImage = com.dravenmiller.swolescroll.util.MonsterRoster.getMonsterFromHorde(
+                        // 👇 FIX IS HERE: Define isPhoenix, and pass only the needed arguments!
+                        val isPhoenix = workoutExercise.exercise.name.contains("Phoenix", ignoreCase = true)
+
+                        val selectedMonsterImage = MonsterRoster.getMonsterFromHorde(
                             muscleGroup = workoutExercise.exercise.muscleGroup,
-                            exerciseName = workoutExercise.exercise.name
+                            exerciseIndex = exerciseIndex,
+                            isPhoenix = isPhoenix
                         )
 
                         val finalMonsterHp = if (monsterHp > 0) monsterHp else 2000
@@ -182,8 +188,8 @@ fun EditExerciseItem(
 
                         Row(modifier = Modifier.fillMaxWidth(0.9f), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                androidx.compose.foundation.Image(
-                                    painter = androidx.compose.ui.res.painterResource(id = selectedMonsterImage),
+                                Image(
+                                    painter = painterResource(id = monsterImageId),
                                     contentDescription = "Enemy Monster",
                                     modifier = Modifier.size(32.dp).padding(end = 8.dp)
                                 )
@@ -202,11 +208,11 @@ fun EditExerciseItem(
                             modifier = Modifier.fillMaxWidth(0.9f).height(8.dp).padding(vertical = 2.dp),
                             color = MaterialTheme.colorScheme.error,
                             trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
-                            strokeCap = androidx.compose.ui.graphics.StrokeCap.Round
+                            strokeCap = StrokeCap.Round
                         )
 
                         Row(modifier = Modifier.fillMaxWidth(0.9f).padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("⚔️ Damage: ${java.text.NumberFormat.getIntegerInstance().format(currentVolume)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                            Text("⚔️ Damage: ${NumberFormat.getIntegerInstance().format(currentVolume)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
                             if (safeType == ExerciseType.ISOMETRIC) {
                                 val totalSeconds = workoutExercise.sets.sumOf { it.time ?: 0 }
                                 if (totalSeconds > 0) Text("TUT: ${String.format("%d:%02d", totalSeconds / 60, totalSeconds % 60)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
@@ -220,11 +226,9 @@ fun EditExerciseItem(
                                 Text("TUT: ${String.format("%d:%02d", totalSeconds / 60, totalSeconds % 60)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                             }
                         } else if (currentVolume > 0) {
-                            Text("Vol: ${java.text.NumberFormat.getIntegerInstance().format(currentVolume)} lbs", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            Text("Vol: ${NumberFormat.getIntegerInstance().format(currentVolume)} lbs", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                         }
                     }
-
-                    // ... PR Logic stays the same below this!
 
                     // 🏆 PR LOGIC
                     if (personalRecord != null) {
@@ -246,7 +250,6 @@ fun EditExerciseItem(
                                 ) {
                                     personalRecord
                                 } else if (safeType.isCardio && personalRecord.contains("lbs")) {
-                                    // Handle legacy data conversion for display
                                     val rawNum = personalRecord.split(" ").firstOrNull() ?: personalRecord
                                     "Max Lvl $rawNum"
                                 } else {
@@ -260,10 +263,9 @@ fun EditExerciseItem(
                             }
                             Text(text = "PR: $prText", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.SemiBold)
                         }
-
-            }
+                    }
                 }
-                // ... (Icons keep same) ...
+
                 Column {
                     Row {
                         IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, "Remove", tint = MaterialTheme.colorScheme.error) }
@@ -285,8 +287,9 @@ fun EditExerciseItem(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     if (selectedTab == 0) {
-                        Column {
-                            // 🧠 2. Check Property .isCardio
+                        Column(
+                            modifier = Modifier
+                        ) {
                             if (safeType.isCardio && isExpanded) {
 
                                 Text("Live Controls", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
@@ -298,9 +301,8 @@ fun EditExerciseItem(
                                     color = if (isMoving) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                                 )
 
-                                // Unified Controls
                                 CardioControls(
-                                    isTreadmill = isTreadmill, // This now comes from Enum check
+                                    isTreadmill = isTreadmill,
                                     primaryValue = primaryVal,
                                     secondaryValueRaw = secondaryValRaw,
                                     onPrimaryChange = { newValue -> onTreadmillSplit(activeSeconds, newValue, secondaryValRaw) },
@@ -313,14 +315,13 @@ fun EditExerciseItem(
                             Row(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
                                 Text("Set", modifier = Modifier.width(28.dp), style = MaterialTheme.typography.labelSmall)
 
-                                // 🧠 3. Cleaner When Statement
                                 when {
                                     isTreadmill -> {
                                         Text("Dist", modifier = Modifier.weight(0.8f), style = MaterialTheme.typography.labelSmall)
                                         Spacer(Modifier.width(4.dp))
                                         Text("Time", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                         Spacer(Modifier.width(4.dp))
-                                        Text("Spd", modifier = Modifier.weight(0.6f), style = MaterialTheme.typography.labelSmall) // Changed from Lvl
+                                        Text("Spd", modifier = Modifier.weight(0.6f), style = MaterialTheme.typography.labelSmall)
                                         Spacer(Modifier.width(4.dp))
                                         Text("Inc", modifier = Modifier.weight(0.6f), style = MaterialTheme.typography.labelSmall)
                                     }
@@ -341,7 +342,7 @@ fun EditExerciseItem(
                                         Spacer(Modifier.width(8.dp))
                                         Text("Dist", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                     }
-                                    else -> { // Strength & 21s
+                                    else -> {
                                         Text("Lbs", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                                         Spacer(Modifier.width(8.dp))
                                         Text("Reps", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
@@ -365,14 +366,12 @@ fun EditExerciseItem(
 
                                     if (workoutExercise.exercise.isBodyweight && userWeight > 0) {
                                         val totalEffectiveLoad = (userWeight * bwMultiplier) + set.weight
-
-                                        // Only show if expanded/editable, or always? Usually good to show always for clarity.
                                         Text(
                                             text = "Total Load: ${String.format("%.1f", totalEffectiveLoad)} lbs",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.primary,
-                                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                                            modifier = Modifier.padding(start = 36.dp, bottom = 4.dp) // Indent to align with inputs
+                                            fontStyle = FontStyle.Italic,
+                                            modifier = Modifier.padding(start = 36.dp, bottom = 4.dp)
                                         )
                                     }
                                 }
@@ -381,7 +380,7 @@ fun EditExerciseItem(
                             TextButton(onClick = onAddSet) { Text("+ Add Set") }
                         }
                     } else {
-                        // Notes tab (Same)
+                        // Notes tab
                         OutlinedTextField(value = workoutExercise.note ?: "", onValueChange = onUpdateNote, label = { Text("Notes") }, modifier = Modifier.fillMaxWidth().height(150.dp), maxLines = 5)
                         if (pastNotes.isNotEmpty()) {
                             Spacer(Modifier.height(8.dp))
@@ -395,7 +394,6 @@ fun EditExerciseItem(
                 Text("${workoutExercise.sets.size} Sets", style = MaterialTheme.typography.bodySmall)
             }
             if (showExitWarning) {
-                // (Alert Dialog logic keeps same)
                 AlertDialog(
                     onDismissRequest = { showExitWarning = false },
                     title = { Text("Workout in progress") },
@@ -439,7 +437,6 @@ fun SetInputRow(
     val safeTime = set.time ?: 0
     var weightText by remember(set.id) { mutableStateOf(if (set.weight == 0.0) "" else set.weight.toString().removeSuffix(".0")) }
 
-    // Reps Text Logic
     var repsText by remember(set.id) {
         mutableStateOf(
             if (isTreadmill) {
@@ -459,7 +456,6 @@ fun SetInputRow(
     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text("$setNumber", modifier = Modifier.width(28.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-        // 🧠 4. Switch logic to use .isCardio property
         if (type.isCardio) {
             if (isEditable) {
                 Surface(
@@ -468,7 +464,6 @@ fun SetInputRow(
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-                        // 1. DISTANCE
                         CompactTextField(
                             value = distanceText,
                             onValueChange = { if (validateDecimal(it)) { distanceText = it; onUpdate(set.copy(distance = it.toDoubleOrNull() ?: 0.0)) } },
@@ -477,23 +472,20 @@ fun SetInputRow(
                             keyboardType = KeyboardType.Decimal,
                             imeAction = ImeAction.Next
                         )
-                        // 2. TIME
                         CompactTimeInput(minutesText, secondsText, modifier = Modifier.weight(1f),
                             onMinChange = { minutesText = it; updateTime(it, secondsText) { t -> onUpdate(set.copy(time = t)) } },
                             onSecChange = { secondsText = it; updateTime(minutesText, it) { t -> onUpdate(set.copy(time = t)) } }
                         )
 
-                        // 3. SPECIAL CONTROLS (Treadmill vs Regular)
                         if (isTreadmill) {
                             CompactTextField(
                                 value = weightText,
                                 onValueChange = { if (validateDecimal(it)) { weightText = it; onUpdate(set.copy(weight = it.toDoubleOrNull() ?: 0.0)) } },
-                                placeholder = "Spd", // Changed from Lvl
+                                placeholder = "Spd",
                                 modifier = Modifier.weight(0.6f),
                                 keyboardType = KeyboardType.Decimal,
                                 imeAction = ImeAction.Next
                             )
-                            // Swap Button
                             IconButton(
                                 onClick = {
                                     val valInWeightSlot = set.weight
@@ -513,7 +505,6 @@ fun SetInputRow(
                                 imeAction = ImeAction.Done
                             )
                         } else {
-                            // Standard layout (Stairs/Bike)
                             CompactTextField(
                                 value = weightText,
                                 onValueChange = { if (validateDecimal(it)) { weightText = it; onUpdate(set.copy(weight = it.toDoubleOrNull() ?: 0.0)) } },
@@ -526,7 +517,6 @@ fun SetInputRow(
                     }
                 }
             } else {
-                // READ ONLY VIEW
                 Text("${set.distance} ${if (isStairs) "stairs" else "mi"}", modifier = Modifier.weight(0.8f), style = readOnlyTextStyle)
                 Text(set.timeFormatted(), modifier = Modifier.weight(1f), style = readOnlyTextStyle, textAlign = TextAlign.Center)
 
@@ -538,7 +528,6 @@ fun SetInputRow(
                 }
             }
         } else if (type == ExerciseType.ISOMETRIC) {
-            // ... (Isometric layout stays same) ...
             if (isEditable) {
                 OutlinedTextField(value = weightText, onValueChange = { if (validateDecimal(it)) { weightText = it; onUpdate(set.copy(weight = it.toDoubleOrNull() ?: 0.0)) } }, modifier = Modifier.weight(1f), placeholder = { Text("Lbs") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next))
                 Spacer(Modifier.width(8.dp))
@@ -552,7 +541,6 @@ fun SetInputRow(
                 Text(set.timeFormatted(), modifier = Modifier.weight(1f), style = readOnlyTextStyle)
             }
         } else if (type == ExerciseType.LoadedCarry) {
-            // ... (Loaded Carry layout stays same) ...
             if (isEditable) {
                 OutlinedTextField(value = weightText, onValueChange = { if (validateDecimal(it)) { weightText = it; onUpdate(set.copy(weight = it.toDoubleOrNull() ?: 0.0)) } }, modifier = Modifier.weight(1f), placeholder = { Text("Lbs") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done))
                 Spacer(Modifier.width(8.dp))
@@ -588,7 +576,7 @@ fun CardioControls(
     onSecondaryChange: (Int) -> Unit
 ) {
     val primaryLabel = if(isTreadmill) "Speed" else "Level"
-    val primaryStep = 0.5 // Treadmill speed usually moves in 0.5 or 0.1 increments
+    val primaryStep = 0.5
 
     val displaySecondary = if (secondaryValueRaw == 0) "0.0" else (secondaryValueRaw / 10.0).toString()
 
@@ -615,7 +603,6 @@ fun CardioControls(
     }
 }
 
-
 @Composable
 fun CompactTextField(
     value: String,
@@ -625,7 +612,7 @@ fun CompactTextField(
     keyboardType: KeyboardType,
     imeAction: ImeAction
 ) {
-    androidx.compose.foundation.text.BasicTextField(
+    BasicTextField(
         value = value,
         onValueChange = onValueChange,
         modifier = modifier.padding(horizontal = 4.dp),
@@ -709,8 +696,6 @@ fun ControlCluster(
         }
     }
 }
-
-
 
 // Logic Helpers
 fun validateDecimal(text: String): Boolean {

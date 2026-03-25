@@ -592,7 +592,10 @@ class LogWorkoutViewModel(
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
-    fun saveWorkout(onSaved: () -> Unit) {
+    fun saveWorkout(
+        improvements:List<com.dravenmiller.swolescroll.model.SkillImprovement> = emptyList(),
+        onSaved: () -> Unit
+    ) {
         if (addedExercises.isEmpty()) return
 
         // 🧠 SMART VALIDATION: Check fields based on Exercise Type
@@ -646,9 +649,15 @@ class LogWorkoutViewModel(
             // 2. Create Name
             val finalName = when {
                 workoutName.value.isNotBlank() -> workoutName.value
-                addedExercises.isNotEmpty() -> "${addedExercises.first().exercise.muscleGroup} Day"
+                addedExercises.isNotEmpty() -> {
+                    // 👇 Make sure the database saves the broad name too!
+                    val rawMuscle = addedExercises.first().exercise.muscleGroup
+                    val broadMuscle = getBroadMuscleGroup(rawMuscle)
+                    "$broadMuscle Day"
+                }
                 else -> "Untitled Workout"
             }
+
 
             // 3. Build Object
             val workout = Workout(
@@ -657,7 +666,8 @@ class LogWorkoutViewModel(
                 date = workoutDate.value,
                 exercises = validExercises, // 👈 Use the filtered list
                 notes = workoutNote.value,
-                isQuest = isQuest.value
+                isQuest = isQuest.value,
+                improvements = improvements
             )
 
             // 4. Save to DB

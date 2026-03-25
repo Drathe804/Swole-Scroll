@@ -5,10 +5,17 @@ import androidx.room.PrimaryKey
 import com.dravenmiller.swolescroll.util.BodyweightMath
 import java.util.UUID
 
-// @Entity = "Make a table for this in the database"
+// 📊 MOVED FROM UI: Now the database knows what this is!
+data class SkillImprovement(
+    val skillName: String,
+    val old1RM: Float,
+    val new1RM: Float,
+    val bonusDamage: Int,
+    val prMessage: String
+)
+
 @Entity(tableName = "workout_table")
 data class Workout(
-    // @PrimaryKey = "This is the unique ID for the row"
     @PrimaryKey
     val id: String = UUID.randomUUID().toString(),
 
@@ -16,13 +23,15 @@ data class Workout(
     val name: String = "New Workout",
     val durationMinutes: Int = 0,
 
-    // Our Converter handles this complex list automatically!
     val exercises: List<WorkoutExercise> = emptyList(),
 
-    // Notes
+    // 👇 NEW: The database will now save your Battle Report!
+    val improvements: List<SkillImprovement> = emptyList(),
+
     val notes: String = "",
     val isQuest: Boolean = false
 )
+
 data class WorkoutExercise(
     val id: String = UUID.randomUUID().toString(),
     val exercise: Exercise,
@@ -59,6 +68,7 @@ fun WorkoutExercise.calculateTotalVolume(userWeight: Double): Int {
         }
     }
 }
+
 fun WorkoutExercise.calculateTotalTUT(): Int {
     return sets.sumOf { it.time ?: 0 }
 }

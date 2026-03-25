@@ -2,48 +2,23 @@ package com.dravenmiller.swolescroll.features.detail
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.dravenmiller.swolescroll.data.AppDatabase
-import com.dravenmiller.swolescroll.model.ExerciseType
 import com.dravenmiller.swolescroll.model.calculateTotalVolume
 import com.dravenmiller.swolescroll.ui.components.DetailExerciseItem
 import java.text.SimpleDateFormat
@@ -62,10 +37,11 @@ fun WorkoutDetailScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     val userWeight by viewModel.userWeight.collectAsState(initial = 0.0)
 
+    // 👇 NEW STATE: Controls the full-screen Battle Report replay!
+    var showBattleReportReplay by remember { mutableStateOf(false) }
 
     val totalWorkoutVolume = remember(workout?.exercises, userWeight) {
         workout?.exercises?.sumOf { workoutExercise ->
-            // Use the helper function we created in WorkoutExercise.kt
             workoutExercise.calculateTotalVolume(userWeight)
         } ?: 0
     }
@@ -95,7 +71,7 @@ fun WorkoutDetailScreen(
                 title = {
                     if (isEditingTitle) {
                         var tempName by remember { mutableStateOf(workout?.name ?: "") }
-                        androidx.compose.material3.OutlinedTextField(
+                        OutlinedTextField(
                             value = tempName,
                             onValueChange = { newName -> tempName = newName },
                             modifier = Modifier.fillMaxWidth(),
@@ -137,7 +113,6 @@ fun WorkoutDetailScreen(
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 },
-                // 2. NEW EDIT/DELETE BUTTONS
                 actions = {
                     if (workout != null) {
                         IconButton(onClick = { onEditClick(workout.id) }) {
@@ -156,26 +131,20 @@ fun WorkoutDetailScreen(
         }
     ) { innerPadding ->
         if (workout == null) {
-            Column(
-                modifier = Modifier
-                    .padding(innerPadding)
-                    .padding(16.dp)
-            ) {
+            Column(modifier = Modifier.padding(innerPadding).padding(16.dp)) {
                 Text("Loading scroll...")
             }
         } else {
             Column(
-                modifier = Modifier
-                    .padding(innerPadding)
-                    .fillMaxSize()
+                modifier = Modifier.padding(innerPadding).fillMaxSize()
             ) {
-                // 3. RESTORED HEADER INFO
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         text = workout.name,
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold
                     )
+
                     if (totalWorkoutVolume > 0) {
                         Text(
                             text = "Total Volume: ${java.text.NumberFormat.getIntegerInstance().format(totalWorkoutVolume)} lbs",
@@ -193,11 +162,30 @@ fun WorkoutDetailScreen(
                     )
                 }
 
-                if (!workout.notes.isNullOrBlank()) {
-                    CollapsibleNoteCard(note = workout.notes)
+                // 👇 THE GLOWING BATTLE REPORT REPLAY BUTTON!
+                // This checks if your workout object actually has the new improvements list saved to it.
+                // NOTE: This will error until you update your Workout.kt entity to include `val improvements: List<SkillImprovement> = emptyList()`
+                if (!workout.improvements.isNullOrEmpty()) {
+                    OutlinedButton(
+                        onClick = { showBattleReportReplay = true },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFD700)),
+                        border = androidx.compose.foundation.BorderStroke(2.dp, Color(0xFFFFD700)),
+                        modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 16.dp).padding(bottom = 16.dp)
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(24.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            text = "View Battle Report",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
                 }
 
-                // 5. RESTORED LIST
+                if (!workout.notes.isNullOrBlank()) {
+                    CollapsibleNoteCard(note = workout.notes, modifier = Modifier.padding(horizontal = 16.dp))
+                }
+
                 LazyColumn(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -212,6 +200,15 @@ fun WorkoutDetailScreen(
                 }
             }
         }
+
+        // 📊 THE FULL-SCREEN REPLAY OVERLAY
+        if (showBattleReportReplay && workout != null) {
+            com.dravenmiller.swolescroll.features.logworkout.BattleReportScreen(
+                improvements = workout.improvements, // 👈 Passes the saved PRs!
+                onBackToRewards = { showBattleReportReplay = false }, // We just hide it, no rewards screen here
+                onExitQuest = { showBattleReportReplay = false }
+            )
+        }
     }
 }
 
@@ -220,27 +217,14 @@ fun CollapsibleNoteCard(
     note: String,
     modifier: Modifier = Modifier
 ) {
-    // 1. State to track if we are expanded
     var isExpanded by remember { mutableStateOf(false) }
-
-    // 2. Simple logic: If text is > 150 chars, we treat it as "Long"
     val isLongText = remember(note) { note.length > 150 }
 
     Card(
-        // Use your theme's container color (the beige/tan color)
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-            // OR use your specific hex if you have it, e.g., Color(0xFFEFE5D5)
-        ),
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-            // 3. THIS IS THE MAGIC MODIFIER! ✨
-            // It makes the card resize smoothly when the text inside changes size.
-            .animateContentSize()
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        modifier = modifier.fillMaxWidth().padding(vertical = 8.dp).animateContentSize()
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Title
             Text(
                 text = "Workout Notes",
                 style = MaterialTheme.typography.titleMedium,
@@ -250,26 +234,18 @@ fun CollapsibleNoteCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Body Text
             Text(
                 text = note,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                // 4. Logic: If expanded, show ALL lines. If not, limit to 3.
                 maxLines = if (isExpanded) Int.MAX_VALUE else 3,
                 overflow = TextOverflow.Ellipsis
             )
 
-            // 5. The "Show More" Button (Only shows if text is long)
             if (isLongText) {
                 Spacer(modifier = Modifier.height(8.dp))
-
-                // Full-width clickable box for easy tapping
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { isExpanded = !isExpanded }
-                        .padding(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().clickable { isExpanded = !isExpanded }.padding(vertical = 4.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(

@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dravenmiller.swolescroll.features.quests.QuestDifficulty
@@ -162,16 +163,18 @@ fun UserProfileScreen(
                         // Show unclaimed volume if it exists
                         if (draftVolume > 0) {
                             Text(
-                                text = "🔮 Unclaimed: ${java.text.NumberFormat.getIntegerInstance().format(draftVolume)} lbs",
+                                text = "🔮 Unclaimed: ${java.text.NumberFormat.getIntegerInstance().format(draftVolume)} XP (Volume Converted)",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.secondary,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = TextAlign.End
                             )
                         } else {
                             Text(
                                 text = "Next: Lvl ${currentLevel + 1}",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.secondary
+                                color = MaterialTheme.colorScheme.secondary,
+                                textAlign = TextAlign.End
                             )
                         }
                     }
@@ -309,8 +312,6 @@ fun DestinyXpBar(
             Color(0xFFF44336), // Red
             Color(0xFFE91E63), // Pink
             Color(0xFF9C27B0), // Purple
-            //Color(0xFF3F51B5), // Deep Blue (Loop runway)
-            //Color(0xFF2196F3)  // Bright Blue (Loop runway)
         )
     }
 
