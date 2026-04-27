@@ -5,7 +5,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTimeFilled
 import androidx.compose.material.icons.filled.Add
@@ -86,7 +88,7 @@ fun ExerciseSelectionDialog(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(600.dp)
+                    .fillMaxHeight(0.9f)
                     .padding(16.dp),
                 shape = RoundedCornerShape(16.dp)
             ) {
@@ -223,10 +225,15 @@ fun AddEditExerciseView(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
+                .fillMaxHeight(0.9f)
                 .padding(16.dp),
             shape = RoundedCornerShape(16.dp)
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(
+                modifier = Modifier
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
                 Text(
                     text = if (isEditing) "Edit Exercise" else "New Exercise",
                     style = MaterialTheme.typography.headlineMedium
@@ -285,9 +292,10 @@ fun AddEditExerciseView(
 
                 // Common Muscle Chips
                 Text("Common Groups:", style = MaterialTheme.typography.labelSmall)
-                Row(
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     commonMuscles.take(3).forEach { suggestion ->
                         SuggestionChip(

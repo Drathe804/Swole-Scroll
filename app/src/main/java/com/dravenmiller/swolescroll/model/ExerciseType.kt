@@ -7,11 +7,11 @@ enum class ExerciseType(
 ) {
     // Standard Lifting
     STRENGTH("Strength", false, true),
+    TWENTY_ONES("21s", false, true),
 
     // Special Types
     LoadedCarry("Loaded Carry", false, false), // Farmers carry usually isn't "Left Arm Only" in the same way
     ISOMETRIC("Isometric", false, false),
-    TWENTY_ONES("21s", false, true),
 
     // The Cardio Family (Flat list for DB, grouped by 'isCardio' property)
     CARDIO("General Cardio", true, false),
